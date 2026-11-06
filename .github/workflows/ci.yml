@@ -18,6 +18,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # Release builds and the main branch's push builds, which are the only ones
+  # allowed to save the cache (see `save-if`); every other run restores it.
+  IS_MAIN: ${{ github.event_name == 'push' && contains(fromJSON('["refs/heads/main","refs/heads/master","refs/heads/claude/rust-game-launcher-px1e6e"]'), github.ref) }}
 
 jobs:
   # Rule engines and networking: fast, no graphics dependencies.
@@ -28,29 +31,31 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ env.IS_MAIN == 'true' }}
       - run: cargo test -p uno-core -p monopoly-core -p netcode
 
-  # Runs in parallel with the exe build. Kept separate because the debug test
-  # profile compiles Bevy again, which used to delay every exe build.
-  test-windows:
-    name: Tests (Windows)
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace --features steam
-
-  # Release build only: no test profile, so the compiler does less work.
+  # One job builds the exe and runs the launcher's tests in the same release
+  # profile, so Bevy is compiled once. (A separate debug test job compiled it a
+  # second time and took ~28 minutes, longer than the exe itself.)
   build-windows:
-    name: Build exe (Windows)
+    name: Build & test (Windows)
     runs-on: windows-latest
+    env:
+      # LLVM's linker ships with rustup and links Bevy far faster than link.exe.
+      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER: rust-lld.exe
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Shared with the Release workflow: same toolchain, profile and features.
+          shared-key: windows-release
+          save-if: ${{ env.IS_MAIN == 'true' }}
       - name: Build release
         run: cargo build --release -p game-box --features steam
+      - name: Test launcher
+        run: cargo test --release -p game-box --features steam
       - name: Package
         shell: pwsh
         run: ./scripts/package-windows.ps1
@@ -65,9 +70,11 @@ jobs:
   # never replace the version the updater offers.
   publish-build:
     name: Publish build release
-    needs: [core, test-windows, build-windows]
-    # Any push that triggers this workflow is a push to the main branch (see `on`).
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: [core, build-windows]
+    # Pushes to the main branch, or a manual run started on it.
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      contains(fromJSON('["refs/heads/main","refs/heads/master","refs/heads/claude/rust-game-launcher-px1e6e"]'), github.ref)
     runs-on: ubuntu-latest
     permissions:
       contents: write

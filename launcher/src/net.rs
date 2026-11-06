@@ -9,6 +9,7 @@
 
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use bevy::prelude::*;
 use monopoly_core as mono;
@@ -22,6 +23,11 @@ use crate::AppState;
 
 pub const PROTOCOL_VERSION: u32 = 1;
 pub const MAX_SEATS: usize = 8;
+
+/// How often a client repeats its `Hello` while waiting for the host's welcome.
+const HELLO_RETRY: Duration = Duration::from_secs(1);
+/// How long a client waits for the host's welcome before giving up.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(25);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GameKind {
@@ -144,6 +150,14 @@ pub struct Session {
     pub monopoly: Option<mono::GameState>,
     /// Waiting for the host's welcome.
     pub connecting: bool,
+    /// Client: the encoded `Hello`, repeated until the host answers.
+    hello: Option<Vec<u8>>,
+    hello_sent_at: Option<Instant>,
+    connect_started: Option<Instant>,
+    /// Steam client: the host's Steam id.
+    steam_host: Option<u64>,
+    /// Steam client: why the last P2P session with the host failed.
+    last_steam_error: Option<String>,
     next_seat_id: u32,
     dirty: bool,
     /// A screen change requested by the session (game start, disconnect...).
@@ -364,6 +378,7 @@ impl Session {
         // The host's lobby decides the game; Uno is only a placeholder until
         // the first lobby snapshot arrives.
         self.join_with(transport, NetMode::SteamClient, GameKind::Uno, profile);
+        self.steam_host = Some(host);
         Ok(())
     }
 
@@ -375,11 +390,34 @@ impl Session {
         self.connecting = true;
         self.lobby.game = game;
         self.transport = Some(Mutex::new(transport));
-        self.send_to_host(&ClientMsg::Hello {
+        let hello = encode(&ClientMsg::Hello {
             name: profile.display_name(),
             version: PROTOCOL_VERSION,
             game,
         });
+        self.connect_started = Some(Instant::now());
+        self.hello = Some(hello);
+        self.send_hello();
+    }
+
+    fn send_hello(&mut self) {
+        let Some(hello) = &self.hello else { return };
+        if let Some(t) = &mut self.transport {
+            t.get_mut().unwrap().send(HOST_PEER, hello);
+        }
+        self.hello_sent_at = Some(Instant::now());
+    }
+
+    /// Client: the host has not answered for too long.
+    pub fn connect_timed_out(&self) -> bool {
+        self.connecting && self.connect_started.is_some_and(|t| t.elapsed() > CONNECT_TIMEOUT)
+    }
+
+    /// Steam client: the P2P session with `peer` failed.
+    pub fn steam_session_failed(&mut self, peer: u64, reason: String) {
+        if self.mode == NetMode::SteamClient && self.steam_host == Some(peer) {
+            self.last_steam_error = Some(reason);
+        }
     }
 
     /// Leaves the session (closing it for everyone when we are the host).
@@ -597,6 +635,14 @@ impl Session {
     }
 
     pub fn poll(&mut self) {
+        // Steam P2P messages sent before the session is up can be lost, so a
+        // client keeps knocking until the host welcomes it.
+        if self.connecting
+            && self.mode == NetMode::SteamClient
+            && self.hello_sent_at.is_none_or(|t| t.elapsed() >= HELLO_RETRY)
+        {
+            self.send_hello();
+        }
         let events = match &mut self.transport {
             Some(t) => t.get_mut().unwrap().poll(),
             None => Vec::new(),
@@ -635,7 +681,11 @@ impl Session {
         let seat = self.peers.get(&peer).copied();
         match msg {
             ClientMsg::Hello { name, version, game: _ } => {
-                if seat.is_some() {
+                if let Some(seat) = seat {
+                    // A repeated hello: our welcome is probably still in flight
+                    // or was lost; answer again so the client stops waiting.
+                    self.send_to(peer, &ServerMsg::Welcome { seat });
+                    self.dirty = true;
                     return;
                 }
                 if version != PROTOCOL_VERSION {
@@ -725,6 +775,7 @@ impl Session {
                     ServerMsg::Welcome { seat } => {
                         self.my_seat = seat;
                         self.connecting = false;
+                        self.hello = None;
                     }
                     ServerMsg::Rejected(reason) | ServerMsg::Closed(reason) => {
                         self.notify(reason);
@@ -827,7 +878,17 @@ fn steam_events(
                 }
             }
             SteamEvent::LobbyJoined(Err(e)) => session.notify(e),
+            SteamEvent::SessionFailed(peer, reason) => session.steam_session_failed(peer, reason),
         }
+    }
+    if session.connect_timed_out() {
+        let mut text = String::from("Хост не отвечает — не удалось подключиться");
+        if let Some(reason) = session.last_steam_error.clone() {
+            text.push_str(&format!(" (Steam: {reason})"));
+        }
+        session.leave(&steam);
+        session.notify(text);
+        session.go_to = Some(AppState::Menu);
     }
 }
 

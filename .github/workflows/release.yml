@@ -22,6 +22,9 @@ jobs:
   windows:
     name: Windows package
     runs-on: windows-latest
+    env:
+      # LLVM's linker ships with rustup and links Bevy far faster than link.exe.
+      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER: rust-lld.exe
     steps:
       - uses: actions/checkout@v4
       - name: Resolve tag
@@ -38,7 +41,11 @@ jobs:
           }
           "name=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
       - uses: dtolnay/rust-toolchain@stable
+      # Restores the main branch's CI cache (same toolchain, profile and features).
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: windows-release
+          save-if: false
       - name: Build release
         run: cargo build --release -p game-box --features steam
       - name: Package
