@@ -382,11 +382,10 @@ fn draw_dice(painter: &Painter, m: &Mapper, state: &GameState, ui: &MonoUi) {
 /// Property card shown when hovering a tile.
 fn tile_tooltip(ctx: &egui::Context, state: &GameState, i: usize) {
     let t = tile(i);
-    egui::Area::new(egui::Id::new("tile-tip"))
+    crate::theme::show_area(ctx, egui::Area::new(egui::Id::new("tile-tip"))
         .order(egui::Order::Tooltip)
         .fixed_pos(ctx.pointer_hover_pos().unwrap_or_default() + Vec2::new(18.0, 18.0))
-        .interactable(false)
-        .show(ctx, |ui| {
+        .interactable(false), |ui| {
             egui::Frame::new()
                 .fill(CREAM)
                 .stroke(stroke(1.0, INK))

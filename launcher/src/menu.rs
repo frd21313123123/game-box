@@ -57,11 +57,10 @@ fn toasts_ui(
     if toasts.0.is_empty() {
         return Ok(());
     }
-    egui::Area::new(egui::Id::new("toasts"))
+    crate::theme::show_area(ctx, egui::Area::new(egui::Id::new("toasts"))
         .anchor(Align2::CENTER_BOTTOM, Vec2::new(0.0, -150.0))
         .order(egui::Order::Tooltip)
-        .interactable(false)
-        .show(ctx, |ui| {
+        .interactable(false), |ui| {
             for (text, age) in &toasts.0 {
                 let alpha = ((4.0 - age) / 0.5).clamp(0.0, 1.0);
                 egui::Frame::new()

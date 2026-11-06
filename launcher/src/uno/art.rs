@@ -399,8 +399,10 @@ fn paint_back() -> Pixmap {
     for (c, dx, dy) in quads {
         p.fill_t(&rounded_rect(cx + dx + 3.0, cy + dy + 3.0, s - 6.0, s - 6.0, 8.0), sk(c.rgb(), 255), t);
     }
-    p.text("ПОСЛЕДНЯЯ", cx, 74.0, 30.0, [0xFB, 0xF7, 0xEE, 235], 0.0);
-    p.text("КАРТА", cx, h - 70.0, 38.0, [0xFB, 0xF7, 0xEE, 235], 0.0);
+    // The game's name, upright at the top and upside down at the bottom so it
+    // reads the same from both sides of the table.
+    p.text("УНО", cx, 74.0, 44.0, [0xFB, 0xF7, 0xEE, 235], 0.0);
+    p.text("УНО", cx, h - 74.0, 44.0, [0xFB, 0xF7, 0xEE, 235], std::f32::consts::PI);
     p.pm
 }
 
