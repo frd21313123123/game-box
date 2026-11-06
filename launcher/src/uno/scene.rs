@@ -81,12 +81,24 @@ pub struct Table {
     initialized: bool,
 }
 
+/// Glow strengths of the active-colour ring and the direction arrows while
+/// they pulse. Each step is its own prebuilt material, swapped in only when the
+/// step changes: writing to a material asset every frame makes Bevy rebuild its
+/// GPU data and re-specialize every mesh that uses it on each frame.
+const GLOW_STEPS: [f32; 9] = [1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0];
+
 #[derive(Resource)]
 pub struct TableAssets {
     art: CardArt,
-    ring_material: Handle<StandardMaterial>,
-    arrow_material: Handle<StandardMaterial>,
+    /// Per card colour (`CardColor::index`), one material per [`GLOW_STEPS`] entry.
+    glow: Vec<Vec<Handle<StandardMaterial>>>,
     marker_material: Handle<StandardMaterial>,
+}
+
+impl TableAssets {
+    fn glow(&self, color: CardColor, step: usize) -> Handle<StandardMaterial> {
+        self.glow[color.index()][step].clone()
+    }
 }
 
 pub fn setup_assets(
@@ -96,16 +108,23 @@ pub fn setup_assets(
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
     let art = build_card_art(&mut images, &mut materials, &mut meshes);
-    let glow = |materials: &mut Assets<StandardMaterial>| {
-        materials.add(StandardMaterial {
-            base_color: Color::srgb(0.9, 0.2, 0.2),
-            emissive: LinearRgba::rgb(2.0, 0.4, 0.4),
-            unlit: false,
-            ..default()
+    let glow = CardColor::ALL
+        .iter()
+        .map(|c| {
+            let [r, g, b] = c.rgb();
+            let base = Color::srgb_u8(r, g, b);
+            GLOW_STEPS
+                .iter()
+                .map(|k| {
+                    materials.add(StandardMaterial {
+                        base_color: base,
+                        emissive: base.to_linear() * *k,
+                        ..default()
+                    })
+                })
+                .collect()
         })
-    };
-    let ring_material = glow(&mut materials);
-    let arrow_material = glow(&mut materials);
+        .collect();
     let marker_material = materials.add(StandardMaterial {
         base_color: Color::srgba(1.0, 0.85, 0.3, 0.35),
         emissive: LinearRgba::rgb(1.6, 1.2, 0.3),
@@ -115,8 +134,7 @@ pub fn setup_assets(
     });
     commands.insert_resource(TableAssets {
         art,
-        ring_material,
-        arrow_material,
+        glow,
         marker_material,
     });
 }
@@ -200,7 +218,7 @@ pub fn spawn_table(
         .spawn((
             ColorRing,
             Mesh3d(meshes.add(Torus::new(0.78, 0.83).mesh().major_resolution(96))),
-            MeshMaterial3d(assets.ring_material.clone()),
+            MeshMaterial3d(assets.glow(CardColor::Red, 0)),
             Transform::from_translation(PILE_POS + Vec3::Y * 0.005),
             NotShadowCaster,
         ))
@@ -214,7 +232,7 @@ pub fn spawn_table(
                     phase: i as f32 / 5.0 * TAU,
                 },
                 Mesh3d(arrow_mesh.clone()),
-                MeshMaterial3d(assets.arrow_material.clone()),
+                MeshMaterial3d(assets.glow(CardColor::Red, 0)),
                 Transform::default(),
                 NotShadowCaster,
             ))
@@ -689,7 +707,7 @@ pub fn animate_table(
     session: Res<Session>,
     table: Res<Table>,
     assets: Res<TableAssets>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut glowing: Query<&mut MeshMaterial3d<StandardMaterial>, Or<(With<ColorRing>, With<DirectionArrow>)>>,
     mut deck: Query<
         (&mut Transform, Has<DeckTop>),
         (Or<(With<DeckStack>, With<DeckTop>)>, Without<DirectionArrow>, Without<TurnMarker>, Without<Figure>, Without<FigureHead>),
@@ -712,6 +730,8 @@ pub fn animate_table(
     >,
     // (angle, angular speed) of the direction arrows around the table.
     mut spin: Local<(f32, f32)>,
+    // The (colour, glow step) the ring and the arrows wear now.
+    mut glow: Local<Option<(CardColor, usize)>>,
 ) {
     let Some(view) = session.uno_view() else { return };
     let t = time.elapsed_secs();
@@ -728,13 +748,15 @@ pub fn animate_table(
         }
     }
 
-    let color = view.active_color.rgb();
-    let lin = Color::srgb_u8(color[0], color[1], color[2]).to_linear();
-    let pulse = 1.6 + (t * 3.0).sin() * 0.4;
-    for h in [&assets.ring_material, &assets.arrow_material] {
-        if let Some(m) = materials.get_mut(h) {
-            m.base_color = Color::srgb_u8(color[0], color[1], color[2]);
-            m.emissive = lin * pulse;
+    // The glow pulses between the first and the last step.
+    let pulse = 0.5 + (t * 3.0).sin() * 0.5;
+    let step = (pulse * (GLOW_STEPS.len() - 1) as f32).round() as usize;
+    let want = (view.active_color, step);
+    if *glow != Some(want) {
+        *glow = Some(want);
+        let handle = assets.glow(want.0, want.1);
+        for mut m in &mut glowing {
+            m.0 = handle.clone();
         }
     }
 
@@ -798,6 +820,22 @@ pub fn animate_table(
     }
 }
 
+/// Distance along `ray` at which it passes through the card at `t`, if it does.
+fn card_hit(ray: &Ray3d, t: &Transform) -> Option<f32> {
+    let normal = t.rotation * Vec3::Z;
+    let denom = ray.direction.dot(normal);
+    if denom.abs() < 1e-4 {
+        return None;
+    }
+    let dist = (t.translation - ray.origin).dot(normal) / denom;
+    if dist <= 0.0 {
+        return None;
+    }
+    let hit = ray.origin + ray.direction * dist;
+    let local = t.rotation.inverse() * (hit - t.translation);
+    (local.x.abs() <= CARD_W * t.scale.x / 2.0 && local.y.abs() <= CARD_H * t.scale.y / 2.0).then_some(dist)
+}
+
 /// Hovering and clicking the local hand and the deck.
 #[allow(clippy::too_many_arguments)]
 pub fn hand_input(
@@ -806,7 +844,7 @@ pub fn hand_input(
     buttons: Res<ButtonInput<MouseButton>>,
     egui_input: Res<EguiWantsInput>,
     table: Res<Table>,
-    transforms: Query<&GlobalTransform, With<CardEntity>>,
+    cards: Query<(&GlobalTransform, &Motion), With<CardEntity>>,
     mut session: ResMut<Session>,
     mut ui: ResMut<UnoUi>,
 ) {
@@ -821,24 +859,22 @@ pub fn hand_input(
     let Ok(ray) = cam.viewport_to_world(cam_t, cursor) else { return };
     let Some(view) = session.uno_view() else { return };
     let me = table.me;
+    let cam_t = cam_t.compute_transform();
+    let count = table.my_hand.len();
 
     // Topmost card under the cursor (later cards are drawn above earlier ones).
+    // A card counts as under the cursor both where it is and where it rests in
+    // the hand: the hovered card rises, and when only its current place was
+    // tested, a cursor near its lower edge lost it, it sank back under the
+    // cursor, rose again, and so on — the card shook up and down.
     let mut best: Option<(f32, usize, u16)> = None;
     for (i, (id, e)) in table.my_hand.iter().enumerate() {
-        let Ok(gt) = transforms.get(*e) else { continue };
-        let (scale, rot, pos) = gt.to_scale_rotation_translation();
-        let normal = rot * Vec3::Z;
-        let denom = ray.direction.dot(normal);
-        if denom.abs() < 1e-4 {
-            continue;
+        let Ok((gt, motion)) = cards.get(*e) else { continue };
+        let mut hit = card_hit(&ray, &gt.compute_transform());
+        if hit.is_none() && motion.flight.is_none() {
+            hit = card_hit(&ray, &my_hand_slot(&cam_t, i, count, 0.0));
         }
-        let dist = (pos - ray.origin).dot(normal) / denom;
-        if dist <= 0.0 {
-            continue;
-        }
-        let hit = ray.origin + ray.direction * dist;
-        let local = rot.inverse() * (hit - pos);
-        if local.x.abs() <= CARD_W * scale.x / 2.0 && local.y.abs() <= CARD_H * scale.y / 2.0 {
+        if let Some(dist) = hit {
             let better = best.is_none_or(|(_, bi, _)| i > bi);
             if better {
                 best = Some((dist, i, *id));

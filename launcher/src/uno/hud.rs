@@ -173,6 +173,7 @@ pub fn draw_hud(
     mut sfx: EventWriter<Sfx>,
     mut profile: ResMut<Profile>,
     mut prev_acting: Local<Option<usize>>,
+    mut last_run: Local<Option<f64>>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?.clone();
     // The keys belong to the table: a focused egui button must not also
@@ -189,7 +190,12 @@ pub fn draw_hud(
     };
     let n = view.players.len();
     let me = session.my_index().unwrap_or(0).min(n - 1);
-    let dt = time.delta_secs();
+    // When egui discards a pass (an area changed size) this system runs again
+    // in the same frame: the animations must advance only once per frame, or
+    // bubbles, the feed and the banner jumped ahead on such frames.
+    let now = time.elapsed_secs_f64();
+    let dt = if *last_run == Some(now) { 0.0 } else { time.delta_secs() };
+    *last_run = Some(now);
 
     process_events(&view, me, &mut ui, &mut sfx);
     let acting = view.acting_seat();
@@ -369,16 +375,8 @@ pub fn draw_hud(
         let t = b.age / BANNER_LIFE;
         let alpha = if t < 0.15 { t / 0.15 } else { ((1.0 - t) / 0.3).clamp(0.0, 1.0) };
         let scale = 1.0 + (1.0 - (t / 0.15).min(1.0)) * 0.3;
-        let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("banner")));
         let pos = Pos2::new(screen.center().x, screen.top() + screen.height() * 0.3);
-        painter.text(
-            pos + Vec2::new(2.0, 3.0),
-            Align2::CENTER_CENTER,
-            &b.text,
-            bold(44.0 * scale),
-            Color32::from_black_alpha((160.0 * alpha) as u8),
-        );
-        painter.text(pos, Align2::CENTER_CENTER, &b.text, bold(44.0 * scale), with_alpha(b.color, (255.0 * alpha) as u8));
+        theme::banner(&ctx, "banner", pos, &b.text, 44.0, b.color, alpha, scale);
     }
 
     // ---- bottom: status + actions -------------------------------------------------------

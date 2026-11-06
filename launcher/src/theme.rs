@@ -5,8 +5,9 @@ use std::sync::Arc;
 use bevy::color::Color;
 use bevy_egui::egui::{
     self, epaint::Shadow, Align2, Color32, CornerRadius, FontData, FontDefinitions, FontFamily,
-    FontId, Margin, Rect, Response, Sense, Stroke, StrokeKind, Ui, Vec2,
+    FontId, Margin, Pos2, Rect, Response, Sense, Stroke, StrokeKind, Ui, Vec2,
 };
+use bevy_egui::egui::emath::TSTransform;
 
 pub const BACKGROUND_3D: Color = Color::srgb(0.055, 0.06, 0.075);
 
@@ -291,4 +292,28 @@ pub fn show_area<R>(
         ctx.request_discard("HUD area changed size");
     }
     response
+}
+
+/// A big caption in the middle of the table («Раунд 2», the chosen colour…)
+/// that pops in at `scale` and fades with `alpha`.
+///
+/// The text is always laid out at the same font size and the pop is a scale
+/// of its layer. Animating the font size itself made egui rasterise the glyphs
+/// at a new size on every frame of the pop, i.e. grow its font atlas and
+/// upload a new atlas texture each frame.
+#[allow(clippy::too_many_arguments)]
+pub fn banner(ctx: &egui::Context, id: &str, pos: Pos2, text: &str, size: f32, color: Color32, alpha: f32, scale: f32) {
+    let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::new(id));
+    // Scales around `pos`: pos * scale + translation == pos.
+    ctx.set_transform_layer(layer, TSTransform::new(pos.to_vec2() * (1.0 - scale), scale));
+    let painter = ctx.layer_painter(layer);
+    let font = bold(size);
+    painter.text(
+        pos + Vec2::new(2.0, 3.0),
+        Align2::CENTER_CENTER,
+        text,
+        font.clone(),
+        Color32::from_black_alpha((160.0 * alpha) as u8),
+    );
+    painter.text(pos, Align2::CENTER_CENTER, text, font, with_alpha(color, (255.0 * alpha) as u8));
 }
