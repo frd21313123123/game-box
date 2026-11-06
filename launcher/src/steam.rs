@@ -19,6 +19,8 @@ pub enum SteamEvent {
     LobbyJoined(Result<(u64, u64), String>),
     /// The user accepted an invite / clicked "Join game" on a friend.
     JoinRequested(u64),
+    /// A P2P session with this Steam user could not be established or broke.
+    SessionFailed(u64, String),
 }
 
 pub struct SteamPlugin;
@@ -71,13 +73,44 @@ mod imp {
     use std::sync::{Arc, Mutex};
 
     use netcode::{NetEvent, PeerId, HOST_PEER};
+    use steamworks::networking_messages::NetworkingMessagesSessionFailed;
     use steamworks::networking_types::{NetworkingIdentity, SendFlags};
     use steamworks::{
-        ChatMemberStateChange, Client, GameLobbyJoinRequested, LobbyChatUpdate, LobbyId, LobbyType,
-        SteamId,
+        sys, Callback, ChatMemberStateChange, Client, GameLobbyJoinRequested, LobbyChatUpdate,
+        LobbyId, LobbyType, SteamId,
     };
 
     const CHANNEL: u32 = 0;
+
+    /// An incoming P2P session request (SteamNetworkingMessagesSessionRequest_t).
+    ///
+    /// `NetworkingMessages::session_request_callback` in steamworks 0.12 throws
+    /// away the handle of the callback it registers, and dropping a handle
+    /// unregisters the callback. The host therefore never accepted a session,
+    /// the client's `Hello` never arrived and joining hung on "Подключаемся к
+    /// хосту…". We register the callback ourselves and keep its handle.
+    struct SessionRequest(sys::SteamNetworkingIdentity);
+
+    unsafe impl Callback for SessionRequest {
+        const ID: i32 = sys::SteamNetworkingMessagesSessionRequest_t_k_iCallback as i32;
+
+        unsafe fn from_raw(raw: *mut std::ffi::c_void) -> Self {
+            let cb = raw
+                .cast::<sys::SteamNetworkingMessagesSessionRequest_t>()
+                .read_unaligned();
+            SessionRequest(cb.m_identityRemote)
+        }
+    }
+
+    fn accept_session(identity: &sys::SteamNetworkingIdentity) -> bool {
+        // SAFETY: called on the main thread from run_callbacks while the
+        // Steam client is alive; the identity comes straight from Steam.
+        unsafe {
+            let messages = sys::SteamAPI_SteamNetworkingMessages_SteamAPI_v002();
+            !messages.is_null()
+                && sys::SteamAPI_ISteamNetworkingMessages_AcceptSessionWithUser(messages, identity)
+        }
+    }
     /// Spacewar — Valve's public test AppID, used unless steam_appid.txt says otherwise.
     const FALLBACK_APP_ID: u32 = 480;
 
@@ -111,10 +144,32 @@ mod imp {
             };
             let mut callbacks = Vec::new();
             if let Some(client) = &client {
+                // Start connecting to the Steam relay network now, so the first
+                // P2P connection does not have to wait for it.
+                client.networking_utils().init_relay_network_access();
                 // Accept P2P sessions; game messages are validated by the host anyway.
-                client.networking_messages().session_request_callback(|req| {
-                    req.accept();
-                });
+                callbacks.push(client.register_callback(|req: SessionRequest| {
+                    let who = NetworkingIdentity::from(req.0).steam_id().map(|id| id.raw());
+                    if accept_session(&req.0) {
+                        info!("Steam: принято P2P-соединение от {who:?}");
+                    } else {
+                        warn!("Steam: не удалось принять P2P-соединение от {who:?}");
+                    }
+                }));
+                let tx = events_tx.clone();
+                callbacks.push(client.register_callback(
+                    move |f: NetworkingMessagesSessionFailed| {
+                        let Some(who) = f.info.identity_remote().and_then(|i| i.steam_id()) else {
+                            return;
+                        };
+                        let reason = match f.info.end_reason() {
+                            Some(r) => format!("{r:?}"),
+                            None => "неизвестная ошибка".to_string(),
+                        };
+                        warn!("Steam: P2P-соединение с {} оборвалось: {reason}", who.raw());
+                        let _ = tx.send(SteamEvent::SessionFailed(who.raw(), reason));
+                    },
+                ));
                 let tx = events_tx.clone();
                 callbacks.push(client.register_callback(move |r: GameLobbyJoinRequested| {
                     let _ = tx.send(SteamEvent::JoinRequested(r.lobby_steam_id.raw()));
