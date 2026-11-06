@@ -6,7 +6,8 @@ use bevy_egui::egui::{self, Align2, Color32, CornerRadius, Pos2, RichText, Strok
 use bevy_egui::EguiContexts;
 use uno_core::{Card, CardColor, DrawReason, Phase, UnoAction, UnoEvent, UnoGame};
 
-use super::binds::{Action, ACTIONS};
+use super::binds::Action;
+use crate::binds::binds_grid;
 use super::keys;
 use super::scene::{head_top, rel_seat};
 use super::{color32, UnoUi};
@@ -14,7 +15,7 @@ use crate::net::{SeatKind, Session};
 use crate::profile::Profile;
 use crate::sfx::Sfx;
 use crate::steam::SteamApi;
-use crate::theme::{self, action_button, bold, hud_frame, rgb, semibold, with_alpha, SEAT_COLORS};
+use crate::theme::{self, action_button, bold, hud_frame, modal, rgb, semibold, with_alpha, SEAT_COLORS};
 use crate::{AppState, MainCamera};
 
 pub struct FeedItem {
@@ -620,20 +621,7 @@ pub fn draw_hud(
                     .color(theme::TEXT_DIM),
             );
             ui_.add_space(8.0);
-            egui::Grid::new("uno-binds").num_columns(2).spacing([20.0, 5.0]).show(ui_, |ui_| {
-                for action in ACTIONS {
-                    ui_.label(action.label());
-                    let waiting = ui.capture == Some(action);
-                    let text = if waiting { "Нажмите клавишу…".to_string() } else { binds.label(action) };
-                    let color = if waiting { theme::GOLD } else { theme::TEXT };
-                    let key = egui::Button::new(RichText::new(text).font(semibold(14.0)).color(color))
-                        .min_size(Vec2::new(170.0, 28.0));
-                    if ui_.add(key).clicked() {
-                        ui.capture = Some(action);
-                    }
-                    ui_.end_row();
-                }
-            });
+            binds_grid(ui_, "uno-binds", &binds, &mut ui.capture);
             ui_.add_space(8.0);
             ui_.label(
                 RichText::new(
@@ -683,15 +671,3 @@ pub fn draw_hud(
     Ok(())
 }
 
-fn modal(ctx: &egui::Context, id: &str, add: impl FnOnce(&mut egui::Ui)) {
-    // Dim the table behind the dialog.
-    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::new(("dim", id))));
-    painter.rect_filled(ctx.screen_rect(), 0, Color32::from_black_alpha(90));
-    egui::Window::new(id)
-        .title_bar(false)
-        .resizable(false)
-        .collapsible(false)
-        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-        .frame(theme::card_frame().inner_margin(egui::Margin::same(22)))
-        .show(ctx, add);
-}

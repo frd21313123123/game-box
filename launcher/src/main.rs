@@ -1,8 +1,10 @@
-//! Game Box — a launcher with two table games: «Монополия» and «Уно».
+//! Game Box — a launcher with table games: «Монополия», «Уно» and «Блэкджек».
 
 // Hide the console window on Windows release builds.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod binds;
+mod blackjack;
 mod debug;
 mod lobby;
 mod menu;
@@ -11,6 +13,7 @@ mod net;
 mod profile;
 mod sfx;
 mod steam;
+mod table3d;
 mod theme;
 mod uno;
 mod update;
@@ -27,10 +30,11 @@ pub enum AppState {
     Lobby,
     Uno,
     Monopoly,
+    Blackjack,
 }
 
 /// The single camera of the app. Menus and Monopoly draw with egui on top of
-/// it; the card game moves it to look at its 3D table.
+/// it; the card games move it to look at their 3D tables.
 #[derive(Component)]
 pub struct MainCamera;
 
@@ -62,6 +66,7 @@ fn main() {
             menu::MenuPlugin,
             lobby::LobbyPlugin,
             uno::UnoPlugin,
+            blackjack::BlackjackPlugin,
             monopoly::MonopolyPlugin,
             debug::DebugPlugin,
             update::UpdatePlugin,

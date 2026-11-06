@@ -8,9 +8,11 @@
 //! A purely local game against bots is just a host without a transport.
 
 use std::collections::HashMap;
+
 use std::sync::Mutex;
 
 use bevy::prelude::*;
+use blackjack_core::{BjAction, BjGame};
 use monopoly_core as mono;
 use netcode::{NetEvent, PeerId, TcpClient, TcpHost, Transport, DEFAULT_PORT, HOST_PEER};
 use serde::{Deserialize, Serialize};
@@ -20,13 +22,15 @@ use crate::profile::Profile;
 use crate::steam::{SteamApi, SteamEvent};
 use crate::AppState;
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
+/// The most seats any game has (each game may allow fewer, see [`GameKind::max_players`]).
 pub const MAX_SEATS: usize = 8;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GameKind {
     Uno,
     Monopoly,
+    Blackjack,
 }
 
 impl GameKind {
@@ -34,6 +38,7 @@ impl GameKind {
         match self {
             GameKind::Uno => "Уно",
             GameKind::Monopoly => "Монополия",
+            GameKind::Blackjack => "Блэкджек",
         }
     }
 
@@ -41,6 +46,31 @@ impl GameKind {
         match self {
             GameKind::Uno => AppState::Uno,
             GameKind::Monopoly => AppState::Monopoly,
+            GameKind::Blackjack => AppState::Blackjack,
+        }
+    }
+
+    pub fn min_players(self) -> usize {
+        match self {
+            GameKind::Uno => uno_core::MIN_PLAYERS,
+            GameKind::Monopoly => 2,
+            GameKind::Blackjack => blackjack_core::MIN_PLAYERS,
+        }
+    }
+
+    pub fn max_players(self) -> usize {
+        match self {
+            GameKind::Uno => uno_core::MAX_PLAYERS,
+            GameKind::Monopoly => MAX_SEATS,
+            GameKind::Blackjack => blackjack_core::MAX_PLAYERS,
+        }
+    }
+
+    /// Bots seated in a new lobby.
+    fn default_bots(self) -> usize {
+        match self {
+            GameKind::Uno => 3,
+            GameKind::Monopoly | GameKind::Blackjack => 2,
         }
     }
 }
@@ -75,6 +105,10 @@ pub struct LobbyInfo {
     pub seats: Vec<Seat>,
     /// Card game: points to win the match (0 = a single round).
     pub uno_target: u32,
+    /// Blackjack: rounds in the match (0 = until everyone is broke).
+    pub bj_rounds: u32,
+    /// Blackjack: chips each player starts with.
+    pub bj_chips: u32,
     pub started: bool,
     pub join_hint: Option<String>,
 }
@@ -85,6 +119,8 @@ impl Default for LobbyInfo {
             game: GameKind::Uno,
             seats: Vec::new(),
             uno_target: uno_core::DEFAULT_TARGET_SCORE,
+            bj_rounds: blackjack_core::DEFAULT_ROUNDS,
+            bj_chips: blackjack_core::DEFAULT_CHIPS,
             started: false,
             join_hint: None,
         }
@@ -98,6 +134,7 @@ pub enum ClientMsg {
     SetColor(usize),
     Uno(UnoAction),
     Monopoly(mono::Action),
+    Blackjack(BjAction),
     Leave,
 }
 
@@ -110,6 +147,7 @@ pub enum ServerMsg {
     BackToLobby,
     Uno(Box<UnoGame>),
     Monopoly(Box<mono::GameState>),
+    Blackjack(Box<BjGame>),
     Notice(String),
     Closed(String),
 }
@@ -142,6 +180,7 @@ pub struct Session {
     /// Host: the full game. Client: the latest view received.
     pub uno: Option<UnoGame>,
     pub monopoly: Option<mono::GameState>,
+    pub blackjack: Option<BjGame>,
     /// Waiting for the host's welcome.
     pub connecting: bool,
     next_seat_id: u32,
@@ -178,7 +217,7 @@ impl Session {
     }
 
     fn new_seat(&mut self, name: String, kind: SeatKind) -> Option<u32> {
-        if self.lobby.seats.len() >= MAX_SEATS {
+        if self.lobby.seats.len() >= self.lobby.game.max_players() {
             return None;
         }
         self.next_seat_id += 1;
@@ -292,6 +331,20 @@ impl Session {
         }
     }
 
+    pub fn set_bj_rounds(&mut self, rounds: u32) {
+        if self.can_edit_lobby() {
+            self.lobby.bj_rounds = rounds;
+            self.dirty = true;
+        }
+    }
+
+    pub fn set_bj_chips(&mut self, chips: u32) {
+        if self.can_edit_lobby() {
+            self.lobby.bj_chips = chips;
+            self.dirty = true;
+        }
+    }
+
     pub fn seat_is_bot(&self, index: usize) -> bool {
         self.lobby
             .seats
@@ -311,11 +364,7 @@ impl Session {
             .new_seat(profile.display_name(), SeatKind::Host)
             .expect("empty lobby has room");
         self.my_seat = me;
-        let bots = match game {
-            GameKind::Uno => 3,
-            GameKind::Monopoly => 2,
-        };
-        for _ in 0..bots {
+        for _ in 0..game.default_bots() {
             self.add_bot();
         }
     }
@@ -403,8 +452,9 @@ impl Session {
             return Err("Начать игру может только хост".into());
         }
         let n = self.lobby.seats.len();
-        if n < 2 {
-            return Err("Нужно минимум 2 игрока".into());
+        let min = self.lobby.game.min_players();
+        if n < min {
+            return Err(format!("Нужно минимум {min} игрока"));
         }
         let seed = seed_now();
         match self.lobby.game {
@@ -432,6 +482,15 @@ impl Session {
                 state.apply(&mono::Action::StartGame);
                 self.monopoly = Some(state);
             }
+            GameKind::Blackjack => {
+                let players = self
+                    .lobby
+                    .seats
+                    .iter()
+                    .map(|s| (s.name.clone(), s.kind == SeatKind::Bot))
+                    .collect();
+                self.blackjack = Some(BjGame::new(players, seed, self.lobby.bj_chips, self.lobby.bj_rounds));
+            }
         }
         self.lobby.started = true;
         self.dirty = true;
@@ -451,6 +510,7 @@ impl Session {
         self.lobby.started = false;
         self.uno = None;
         self.monopoly = None;
+        self.blackjack = None;
         // Seats whose players left mid-game are removed now.
         self.lobby.seats.retain(|s| !s.replaced_by_bot);
         self.dirty = true;
@@ -498,6 +558,53 @@ impl Session {
                 false
             }
         }
+    }
+
+    // ----- Blackjack ------------------------------------------------------------
+
+    /// What this player is allowed to see of the Blackjack table.
+    pub fn bj_view(&self) -> Option<BjGame> {
+        let game = self.blackjack.as_ref()?;
+        if self.is_host {
+            Some(game.view_for(self.my_index()))
+        } else {
+            Some(game.clone())
+        }
+    }
+
+    pub fn submit_blackjack(&mut self, action: BjAction) {
+        if self.is_host {
+            if let Some(i) = self.my_index() {
+                self.host_apply_blackjack(i, action);
+            }
+        } else {
+            self.send_to_host(&ClientMsg::Blackjack(action));
+        }
+    }
+
+    /// Host only: applies an action on behalf of seat `index` (used by bots too).
+    pub fn host_apply_blackjack(&mut self, index: usize, action: BjAction) -> bool {
+        let Some(game) = &mut self.blackjack else { return false };
+        match game.apply(index, action) {
+            Ok(()) => {
+                self.dirty = true;
+                true
+            }
+            Err(e) => {
+                if Some(index) == self.my_index() {
+                    self.notify(e.to_string());
+                }
+                false
+            }
+        }
+    }
+
+    /// Host only: the dealer's next move (reveal, draw or settle).
+    pub fn host_dealer_step(&mut self) -> bool {
+        let Some(game) = &mut self.blackjack else { return false };
+        let moved = game.dealer_step();
+        self.dirty |= moved;
+        moved
     }
 
     // ----- Monopoly -----------------------------------------------------------
@@ -579,6 +686,10 @@ impl Session {
             .monopoly
             .as_ref()
             .map(|s| encode(&ServerMsg::Monopoly(Box::new(s.clone()))));
+        let blackjack = self
+            .blackjack
+            .as_ref()
+            .map(|g| encode(&ServerMsg::Blackjack(Box::new(g.view_for(None)))));
         for (peer, seat) in peers {
             let uno = self.uno.as_ref().map(|g| {
                 let idx = self.seat_index(seat);
@@ -589,6 +700,9 @@ impl Session {
             t.send(peer, &lobby);
             if let Some(m) = &monopoly {
                 t.send(peer, m);
+            }
+            if let Some(b) = &blackjack {
+                t.send(peer, b);
             }
             if let Some(u) = &uno {
                 t.send(peer, u);
@@ -682,6 +796,18 @@ impl Session {
                     self.send_to(peer, &ServerMsg::Notice("Сейчас это действие недоступно".into()));
                 }
             }
+            ClientMsg::Blackjack(action) => {
+                let Some(idx) = seat.and_then(|s| self.seat_index(s)) else { return };
+                if action == BjAction::NextRound {
+                    // Only the host moves the table on to the next round.
+                    return;
+                }
+                let Some(game) = &mut self.blackjack else { return };
+                match game.apply(idx, action) {
+                    Ok(()) => self.dirty = true,
+                    Err(e) => self.send_to(peer, &ServerMsg::Notice(e.to_string())),
+                }
+            }
             ClientMsg::Leave => self.peer_left(peer),
         }
     }
@@ -698,6 +824,9 @@ impl Session {
             seat.kind = SeatKind::Bot;
             seat.replaced_by_bot = true;
             if let Some(game) = &mut self.uno {
+                game.players[idx].is_bot = true;
+            }
+            if let Some(game) = &mut self.blackjack {
                 game.players[idx].is_bot = true;
             }
             self.notify(format!("{name} отключился — за него играет бот"));
@@ -736,10 +865,12 @@ impl Session {
                     ServerMsg::BackToLobby => {
                         self.uno = None;
                         self.monopoly = None;
+                        self.blackjack = None;
                         self.go_to = Some(AppState::Lobby);
                     }
                     ServerMsg::Uno(view) => self.uno = Some(*view),
                     ServerMsg::Monopoly(state) => self.monopoly = Some(*state),
+                    ServerMsg::Blackjack(view) => self.blackjack = Some(*view),
                     ServerMsg::Notice(text) => self.notify(text),
                 }
             }

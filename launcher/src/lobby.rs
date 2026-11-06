@@ -5,7 +5,7 @@ use bevy_egui::egui::{self, Align2, Color32, RichText, Stroke, Vec2};
 use bevy_egui::{EguiContexts, EguiPrimaryContextPass};
 use monopoly_core::{TOKENS, TOKEN_COLORS};
 
-use crate::net::{GameKind, NetMode, SeatKind, Session, MAX_SEATS};
+use crate::net::{GameKind, NetMode, SeatKind, Session};
 use crate::steam::SteamApi;
 use crate::theme::{self, action_button, bold, rgb, semibold, SEAT_COLORS};
 use crate::AppState;
@@ -80,7 +80,7 @@ fn lobby_ui(
                 theme::card_frame().show(left, |ui| {
                     ui.set_min_height(560.0);
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(format!("Игроки ({}/{MAX_SEATS})", session.lobby.seats.len())).font(bold(20.0)));
+                        ui.label(RichText::new(format!("Игроки ({}/{})", session.lobby.seats.len(), game.max_players())).font(bold(20.0)));
                     });
                     ui.add_space(6.0);
                     let seats = session.lobby.seats.clone();
@@ -152,7 +152,7 @@ fn lobby_ui(
                     if is_host {
                         ui.add_space(8.0);
                         ui.horizontal(|ui| {
-                            let room = session.lobby.seats.len() < MAX_SEATS;
+                            let room = session.lobby.seats.len() < game.max_players();
                             if action_button(ui, "+ Бот", theme::PANEL_HI, room, 140.0).clicked() {
                                 session.add_bot();
                             }
@@ -190,6 +190,37 @@ fn lobby_ui(
                                 RichText::new(
                                     "Правила: цвет или значение, «Пропуск», «Смена направления», «+2», «Заказ цвета», \
                                      «+4» с правом оспорить, штраф +2 за забытое «Последняя!».",
+                                )
+                                .color(theme::TEXT_DIM),
+                            );
+                        }
+                        GameKind::Blackjack => {
+                            ui.label("Длительность матча");
+                            ui.horizontal(|ui| {
+                                for (label, value) in [("5 раундов", 5), ("10 раундов", 10), ("20 раундов", 20), ("Пока есть фишки", 0)] {
+                                    let selected = session.lobby.bj_rounds == value;
+                                    if ui.add_enabled(is_host, egui::Button::new(label).selected(selected)).clicked() {
+                                        session.set_bj_rounds(value);
+                                    }
+                                }
+                            });
+                            ui.add_space(4.0);
+                            ui.label("Фишки на старте");
+                            ui.horizontal(|ui| {
+                                for value in [500, 1000, 2500, 5000] {
+                                    let selected = session.lobby.bj_chips == value;
+                                    if ui.add_enabled(is_host, egui::Button::new(value.to_string()).selected(selected)).clicked() {
+                                        session.set_bj_chips(value);
+                                    }
+                                }
+                            });
+                            ui.add_space(4.0);
+                            ui.label(
+                                RichText::new(
+                                    "Правила: башмак из 6 колод, ставки 10–500. Блэкджек платит 3:2, страховка 2:1. \
+                                     Дилер добирает до 17 и стоит на мягких 17. Удвоение на двух картах, в том числе после сплита; \
+                                     делить можно пару одинаковых карт до 4 рук, тузы получают по одной карте. \
+                                     Побеждает тот, у кого больше фишек после последнего раунда.",
                                 )
                                 .color(theme::TEXT_DIM),
                             );
@@ -252,14 +283,15 @@ fn lobby_ui(
                     ui.separator();
                     ui.add_space(8.0);
                     if is_host {
-                        let enough = session.lobby.seats.len() >= 2;
+                        let min = game.min_players();
+                        let enough = session.lobby.seats.len() >= min;
                         if action_button(ui, "▶  Начать игру", theme::GOOD, enough, 320.0).clicked() {
                             if let Err(e) = session.start_game() {
                                 session.notify(e);
                             }
                         }
                         if !enough {
-                            ui.colored_label(theme::WARN, "Нужно минимум 2 игрока — добавьте бота.");
+                            ui.colored_label(theme::WARN, format!("Нужно минимум {min} игрока — добавьте бота."));
                         }
                     } else {
                         ui.horizontal(|ui| {

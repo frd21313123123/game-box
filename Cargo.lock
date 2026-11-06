@@ -1467,6 +1467,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "blackjack-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "blake3"
 version = "1.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2362,6 +2370,7 @@ dependencies = [
  "ab_glyph",
  "bevy",
  "bevy_egui",
+ "blackjack-core",
  "dirs",
  "monopoly-core",
  "netcode",

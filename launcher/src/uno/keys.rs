@@ -1,11 +1,12 @@
 //! Keyboard control of the card table: move a selection through the hand,
 //! play, draw, call «last card!», and answer the dialogs. Keys come from the
-//! player's bindings (see [`super::binds`]).
+//! player's bindings (see [`crate::binds`]).
 
 use bevy::prelude::*;
 use uno_core::{Phase, UnoAction, UnoGame};
 
-use super::binds::{self, Action};
+use super::binds::Action;
+use crate::binds::{capture_key, Capture};
 use super::scene::Table;
 use super::UnoUi;
 use crate::net::Session;
@@ -65,15 +66,15 @@ pub fn keyboard_input(
 
     // While the settings dialog waits for a key, that key becomes the binding.
     if let Some(action) = ui.capture {
-        if let Some(&code) = keys.get_just_pressed().next() {
-            ui.capture = None;
-            if code == KeyCode::Escape {
-                return;
-            }
-            if binds::is_bindable(code) {
-                profile.data.uno_binds.set(action, code);
+        match capture_key(&keys, action, &mut profile.data.uno_binds) {
+            Capture::Waiting => {}
+            Capture::Cancelled => ui.capture = None,
+            Capture::Bound => {
+                ui.capture = None;
                 profile.save();
-            } else {
+            }
+            Capture::Rejected => {
+                ui.capture = None;
                 session.notify("Эту клавишу назначить нельзя");
             }
         }

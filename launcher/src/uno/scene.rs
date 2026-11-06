@@ -8,7 +8,7 @@
 use std::collections::VecDeque;
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
-use bevy::pbr::{DistanceFog, FogFalloff, NotShadowCaster};
+use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_egui::input::EguiWantsInput;
@@ -18,10 +18,13 @@ use super::art::{build_card_art, face_index, CardArt, CARD_H, CARD_W};
 use super::UnoUi;
 use crate::net::Session;
 use crate::sfx::Sfx;
+use crate::table3d::{
+    enter_room, face_down, face_up, fly, hash, head_look, leave_room, spawn_room, Figure, FigureHead, FigureKit,
+    Flight, Motion, TABLE_R,
+};
 use crate::theme::SEAT_COLORS;
 use crate::MainCamera;
 
-pub const TABLE_R: f32 = 3.0;
 const SEAT_R: f32 = 4.05;
 const OPP_HAND_R: f32 = 3.45;
 const DECK_POS: Vec3 = Vec3::new(-0.75, 0.0, -0.15);
@@ -42,36 +45,11 @@ pub struct CardEntity {
     back: Entity,
 }
 
-/// Where a card wants to be, and an optional flight that gets it there.
-#[derive(Component)]
-pub struct Motion {
-    target: Transform,
-    flight: Option<Flight>,
-    despawn_on_arrival: bool,
-}
-
-struct Flight {
-    from: Transform,
-    elapsed: f32,
-    delay: f32,
-    duration: f32,
-    height: f32,
-}
-
 #[derive(Component)]
 pub struct Fading {
     elapsed: f32,
     material: Handle<StandardMaterial>,
 }
-
-#[derive(Component)]
-pub struct Figure {
-    seat: usize,
-    base: Transform,
-}
-
-#[derive(Component)]
-pub struct FigureHead;
 
 #[derive(Component)]
 pub struct DeckStack;
@@ -169,21 +147,6 @@ pub fn rel_seat(seat: usize, me: usize, n: usize) -> usize {
     (seat + n - me) % n
 }
 
-fn hash(a: u64) -> f32 {
-    let mut z = a.wrapping_add(0x9E37_79B9_7F4A_7C15);
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    ((z ^ (z >> 31)) >> 40) as f32 / (1u64 << 24) as f32
-}
-
-fn face_up(yaw: f32) -> Quat {
-    Quat::from_rotation_y(yaw) * Quat::from_rotation_x(-FRAC_PI_2)
-}
-
-fn face_down(yaw: f32) -> Quat {
-    Quat::from_rotation_y(yaw) * Quat::from_rotation_x(FRAC_PI_2)
-}
-
 fn deck_top_transform(count: usize) -> Transform {
     Transform::from_translation(DECK_POS + Vec3::Y * (count as f32 * 0.0024 + 0.01))
         .with_rotation(face_down(0.12))
@@ -200,98 +163,17 @@ pub fn spawn_table(
 ) {
     commands.insert_resource(Table::default());
     if let Ok((cam, mut t)) = camera.single_mut() {
-        *t = Transform::from_translation(CAMERA_POS).looking_at(CAMERA_LOOK, Vec3::Y);
-        commands.entity(cam).insert(DistanceFog {
-            color: Color::srgb(0.045, 0.04, 0.05),
-            falloff: FogFalloff::Linear {
-                start: 11.0,
-                end: 24.0,
-            },
-            ..default()
-        });
+        enter_room(&mut commands, (cam, &mut t), CAMERA_POS, CAMERA_LOOK, &mut ambient);
     }
-    ambient.brightness = 260.0;
-    ambient.color = Color::srgb(1.0, 0.93, 0.85);
-
-    let felt = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.09, 0.36, 0.24),
-        perceptual_roughness: 0.96,
-        reflectance: 0.1,
-        ..default()
-    });
-    let wood = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.36, 0.2, 0.11),
-        perceptual_roughness: 0.38,
-        reflectance: 0.45,
-        ..default()
-    });
-    let dark_wood = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.16, 0.1, 0.07),
-        perceptual_roughness: 0.6,
-        ..default()
-    });
-    let floor = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.17, 0.13, 0.12),
-        perceptual_roughness: 0.92,
-        ..default()
-    });
     let card_edge = materials.add(StandardMaterial {
         base_color: Color::srgb(0.93, 0.91, 0.86),
         perceptual_roughness: 0.8,
         ..default()
     });
-
     let root = commands
         .spawn((UnoRoot, Transform::default(), Visibility::default()))
         .id();
-    let mut spawn = |bundle: (Mesh3d, MeshMaterial3d<StandardMaterial>, Transform)| {
-        let e = commands.spawn(bundle).id();
-        commands.entity(root).add_child(e);
-        e
-    };
-
-    // Table.
-    spawn((
-        Mesh3d(meshes.add(Cylinder::new(TABLE_R, 0.12).mesh().resolution(96))),
-        MeshMaterial3d(felt),
-        Transform::from_xyz(0.0, -0.06, 0.0),
-    ));
-    spawn((
-        Mesh3d(meshes.add(Torus::new(TABLE_R - 0.02, TABLE_R + 0.26).mesh().minor_resolution(24).major_resolution(128))),
-        MeshMaterial3d(wood.clone()),
-        Transform::from_xyz(0.0, -0.02, 0.0).with_scale(Vec3::new(1.0, 0.55, 1.0)),
-    ));
-    spawn((
-        Mesh3d(meshes.add(Cylinder::new(TABLE_R + 0.2, 0.22).mesh().resolution(96))),
-        MeshMaterial3d(wood.clone()),
-        Transform::from_xyz(0.0, -0.2, 0.0),
-    ));
-    spawn((
-        Mesh3d(meshes.add(Cylinder::new(0.55, 1.6))),
-        MeshMaterial3d(dark_wood.clone()),
-        Transform::from_xyz(0.0, -1.1, 0.0),
-    ));
-    spawn((
-        Mesh3d(meshes.add(Cylinder::new(1.4, 0.12))),
-        MeshMaterial3d(dark_wood.clone()),
-        Transform::from_xyz(0.0, -1.86, 0.0),
-    ));
-    spawn((
-        Mesh3d(meshes.add(Plane3d::default().mesh().size(60.0, 60.0))),
-        MeshMaterial3d(floor),
-        Transform::from_xyz(0.0, -1.92, 0.0),
-    ));
-    // A round rug under the table.
-    let rug = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.32, 0.12, 0.12),
-        perceptual_roughness: 1.0,
-        ..default()
-    });
-    spawn((
-        Mesh3d(meshes.add(Cylinder::new(6.5, 0.02).mesh().resolution(96))),
-        MeshMaterial3d(rug),
-        Transform::from_xyz(0.0, -1.91, 0.0),
-    ));
+    spawn_room(&mut commands, &mut meshes, &mut materials, root, Color::srgb(0.09, 0.36, 0.24));
 
     // Draw pile: a block of card edges with a card back on top.
     let deck_block = commands
@@ -350,146 +232,23 @@ pub fn spawn_table(
         .id();
     commands.entity(root).add_child(marker);
 
-    // Lights: a warm lamp above the table plus soft fill.
-    let lamp = commands
-        .spawn((
-            SpotLight {
-                intensity: 9_000_000.0,
-                color: Color::srgb(1.0, 0.9, 0.75),
-                range: 30.0,
-                radius: 0.3,
-                shadows_enabled: true,
-                outer_angle: 0.95,
-                inner_angle: 0.55,
-                ..default()
-            },
-            Transform::from_xyz(0.0, 7.5, 0.4).looking_at(Vec3::ZERO, Vec3::Z),
-        ))
-        .id();
-    commands.entity(root).add_child(lamp);
-    // Lamp shade.
-    let shade_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.12, 0.1, 0.08),
-        emissive: LinearRgba::rgb(0.6, 0.45, 0.25),
-        perceptual_roughness: 0.5,
-        cull_mode: None,
-        ..default()
-    });
-    let shade = commands
-        .spawn((
-            Mesh3d(meshes.add(ConicalFrustum {
-                radius_top: 0.25,
-                radius_bottom: 0.9,
-                height: 0.6,
-            })),
-            MeshMaterial3d(shade_mat),
-            Transform::from_xyz(0.0, 7.9, 0.4),
-            NotShadowCaster,
-        ))
-        .id();
-    commands.entity(root).add_child(shade);
-    let fill = commands
-        .spawn((
-            PointLight {
-                intensity: 1_400_000.0,
-                color: Color::srgb(0.65, 0.75, 1.0),
-                range: 40.0,
-                ..default()
-            },
-            Transform::from_xyz(-6.0, 5.0, 6.0),
-        ))
-        .id();
-    commands.entity(root).add_child(fill);
-    let rim = commands
-        .spawn((
-            PointLight {
-                intensity: 900_000.0,
-                color: Color::srgb(1.0, 0.7, 0.5),
-                range: 40.0,
-                ..default()
-            },
-            Transform::from_xyz(5.0, 3.0, -7.0),
-        ))
-        .id();
-    commands.entity(root).add_child(rim);
-
     // Opponents in their chairs.
     let n = session.lobby.seats.len().max(2);
     let me = session.my_index().unwrap_or(0);
-    let skin = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.96, 0.8, 0.66),
-        perceptual_roughness: 0.7,
-        ..default()
-    });
-    let eye = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.05, 0.05, 0.07),
-        perceptual_roughness: 0.2,
-        ..default()
-    });
-    let chair_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.24, 0.14, 0.09),
-        perceptual_roughness: 0.55,
-        ..default()
-    });
-    let body_mesh = meshes.add(Capsule3d::new(0.42, 0.75));
-    let head_mesh = meshes.add(Sphere::new(0.36).mesh().uv(32, 18));
-    let eye_mesh = meshes.add(Sphere::new(0.05).mesh().uv(12, 8));
-    let arm_mesh = meshes.add(Capsule3d::new(0.11, 0.55));
-    let seat_mesh = meshes.add(Cuboid::new(1.1, 0.12, 0.95));
-    let back_mesh = meshes.add(Cuboid::new(1.1, 1.3, 0.12));
-    let leg_mesh = meshes.add(Cuboid::new(0.09, 1.0, 0.09));
+    let kit = FigureKit::new(&mut meshes, &mut materials);
     for seat in 0..n {
         let rel = rel_seat(seat, me, n);
         if rel == 0 {
             continue;
         }
-        let angle = seat_angle(rel, n);
-        let dir = seat_dir(angle);
-        let pos = dir * SEAT_R;
-        let facing = Transform::from_translation(pos).looking_at(Vec3::new(0.0, 0.0, 0.0), Vec3::Y);
-        let base = Transform::from_translation(pos + Vec3::Y * -0.95).with_rotation(facing.rotation);
+        let pos = seat_dir(seat_angle(rel, n)) * SEAT_R;
         let c = SEAT_COLORS[seat % SEAT_COLORS.len()];
         let shirt = materials.add(StandardMaterial {
             base_color: Color::srgb_u8(c[0], c[1], c[2]),
             perceptual_roughness: 0.75,
             ..default()
         });
-        let figure = commands
-            .spawn((Figure { seat, base }, base, Visibility::default()))
-            .with_children(|p| {
-                // Chair (local -Z points at the table).
-                p.spawn((Mesh3d(seat_mesh.clone()), MeshMaterial3d(chair_mat.clone()), Transform::from_xyz(0.0, -0.1, 0.25)));
-                p.spawn((Mesh3d(back_mesh.clone()), MeshMaterial3d(chair_mat.clone()), Transform::from_xyz(0.0, 0.55, 0.72)));
-                for (x, z) in [(-0.48, -0.15), (0.48, -0.15), (-0.48, 0.65), (0.48, 0.65)] {
-                    p.spawn((Mesh3d(leg_mesh.clone()), MeshMaterial3d(chair_mat.clone()), Transform::from_xyz(x, -0.66, z)));
-                }
-                // Body.
-                p.spawn((Mesh3d(body_mesh.clone()), MeshMaterial3d(shirt.clone()), Transform::from_xyz(0.0, 0.62, 0.25)));
-                for side in [-1.0f32, 1.0] {
-                    p.spawn((
-                        Mesh3d(arm_mesh.clone()),
-                        MeshMaterial3d(shirt.clone()),
-                        Transform::from_xyz(side * 0.48, 0.72, -0.05)
-                            .with_rotation(Quat::from_rotation_x(1.05) * Quat::from_rotation_z(side * -0.25)),
-                    ));
-                }
-                p.spawn((
-                    FigureHead,
-                    Mesh3d(head_mesh.clone()),
-                    MeshMaterial3d(skin.clone()),
-                    Transform::from_xyz(0.0, 1.62, 0.22),
-                ))
-                .with_children(|h| {
-                    for side in [-1.0f32, 1.0] {
-                        h.spawn((
-                            Mesh3d(eye_mesh.clone()),
-                            MeshMaterial3d(eye.clone()),
-                            Transform::from_xyz(side * 0.12, 0.05, -0.32),
-                        ));
-                    }
-                });
-            })
-            .id();
+        let figure = kit.spawn(&mut commands, pos, seat, shirt, true);
         commands.entity(root).add_child(figure);
     }
 }
@@ -504,10 +263,7 @@ pub fn despawn_table(
     for e in roots.iter().chain(cards.iter()) {
         commands.entity(e).despawn();
     }
-    if let Ok(cam) = camera.single() {
-        commands.entity(cam).remove::<DistanceFog>();
-    }
-    *ambient = AmbientLight::default();
+    leave_room(&mut commands, &camera, &mut ambient);
     commands.remove_resource::<Table>();
 }
 
@@ -539,16 +295,6 @@ fn spawn_card(commands: &mut Commands, assets: &TableAssets, at: Transform, face
         ))
         .add_children(&[front, back])
         .id()
-}
-
-fn fly(motion: &mut Motion, from: Transform, delay: f32, duration: f32, height: f32) {
-    motion.flight = Some(Flight {
-        from,
-        elapsed: 0.0,
-        delay,
-        duration,
-        height,
-    });
 }
 
 /// Sort key so the local hand is grouped by colour and value.
@@ -896,52 +642,6 @@ fn playable_ids(_game: &UnoGame, me: usize, session: &Session) -> Vec<u16> {
         .unwrap_or_default()
 }
 
-fn ease_in_out(t: f32) -> f32 {
-    if t < 0.5 {
-        4.0 * t * t * t
-    } else {
-        1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
-    }
-}
-
-pub fn animate_cards(
-    mut commands: Commands,
-    time: Res<Time>,
-    mut q: Query<(Entity, &mut Transform, &mut Motion)>,
-) {
-    let dt = time.delta_secs();
-    let follow = 1.0 - (-14.0 * dt).exp();
-    for (e, mut t, mut m) in &mut q {
-        let target = m.target;
-        if let Some(f) = &mut m.flight {
-            f.elapsed += dt;
-            if f.elapsed < f.delay {
-                *t = f.from;
-                continue;
-            }
-            let raw = ((f.elapsed - f.delay) / f.duration).clamp(0.0, 1.0);
-            let k = ease_in_out(raw);
-            t.translation = f.from.translation.lerp(target.translation, k) + Vec3::Y * f.height * (PI * k).sin();
-            t.rotation = f.from.rotation.slerp(target.rotation, k);
-            t.scale = f.from.scale.lerp(target.scale, k);
-            if raw >= 1.0 {
-                m.flight = None;
-                if m.despawn_on_arrival {
-                    commands.entity(e).despawn();
-                }
-            }
-            continue;
-        }
-        if m.despawn_on_arrival {
-            commands.entity(e).despawn();
-            continue;
-        }
-        t.translation = t.translation.lerp(target.translation, follow);
-        t.rotation = t.rotation.slerp(target.rotation, follow);
-        t.scale = t.scale.lerp(target.scale, follow);
-    }
-}
-
 /// Old pile cards slide outwards and fade away.
 pub fn fade_old_cards(
     mut commands: Commands,
@@ -1081,12 +781,7 @@ pub fn animate_table(
         };
         for child in children.iter() {
             if let Ok(mut head) = heads.get_mut(child) {
-                let world_head = fig.base.transform_point(Vec3::new(0.0, 1.62, 0.22));
-                let to = (look_at + Vec3::Y * 0.6 - world_head).normalize_or_zero();
-                let local = fig.base.rotation.inverse() * to;
-                let yaw = (-local.x).atan2(-local.z).clamp(-0.9, 0.9);
-                let pitch = local.y.asin().clamp(-0.5, 0.3);
-                let goal = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
+                let goal = head_look(&fig.base, look_at + Vec3::Y * 0.6);
                 head.rotation = head.rotation.slerp(goal, 0.08);
             }
         }
