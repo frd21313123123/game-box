@@ -32,7 +32,7 @@ pub enum GameKind {
 impl GameKind {
     pub fn title(self) -> &'static str {
         match self {
-            GameKind::Uno => "Последняя карта",
+            GameKind::Uno => "Уно",
             GameKind::Monopoly => "Монополия",
         }
     }
