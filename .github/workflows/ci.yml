@@ -1,25 +1,23 @@
 name: CI
 
-# Every push to the main branch builds the Windows exe and publishes it as a
-# pre-release "build-<run number>" on the Releases page. Pull requests only
-# build and test; they publish nothing.
+# Every build, from every branch, builds the Windows exe and publishes it as a
+# pre-release "build-<run number>" on the Releases page. A push to a branch
+# with an open pull request already builds that code, so pull requests are not
+# built a second time.
 on:
-  pull_request:
   push:
-    # claude/rust-game-launcher-px1e6e is this repository's main branch.
-    branches: [main, master, claude/rust-game-launcher-px1e6e]
+    branches: ["**"]
   workflow_dispatch:
 
-# Only a newer push to a pull request cancels an older run. Builds on main are
-# never cancelled, so every build reaches the Releases page.
+# Runs are never cancelled, so every build reaches the Releases page.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.run_id }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
-  # Release builds and the main branch's push builds, which are the only ones
-  # allowed to save the cache (see `save-if`); every other run restores it.
+  # The main branch's push builds are the only ones allowed to save the cache
+  # (see `save-if`); every other run restores it.
   IS_MAIN: ${{ github.event_name == 'push' && contains(fromJSON('["refs/heads/main","refs/heads/master","refs/heads/claude/rust-game-launcher-px1e6e"]'), github.ref) }}
 
 jobs:
@@ -66,15 +64,11 @@ jobs:
           if-no-files-found: error
 
   # Publishes the exe as a pre-release. Pre-releases are skipped by
-  # `releases/latest`, which the launcher's updater reads, so builds from main
-  # never replace the version the updater offers.
+  # `releases/latest`, which the launcher's updater reads, so builds never
+  # replace the version the updater offers. Runs for every branch.
   publish-build:
     name: Publish build release
     needs: [core, build-windows]
-    # Pushes to the main branch, or a manual run started on it.
-    if: >-
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
-      contains(fromJSON('["refs/heads/main","refs/heads/master","refs/heads/claude/rust-game-launcher-px1e6e"]'), github.ref)
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -86,7 +80,7 @@ jobs:
         with:
           tag_name: build-${{ github.run_number }}
           target_commitish: ${{ github.sha }}
-          name: "Сборка #${{ github.run_number }}"
+          name: "Сборка #${{ github.run_number }} (${{ github.ref_name }})"
           prerelease: true
           generate_release_notes: true
           files: game-box-windows-x64.zip
