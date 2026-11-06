@@ -1,4 +1,8 @@
 [package]
 name = "netcode"
+description = "Минимальный транспорт для сетевой игры: TCP (LAN/интернет по IP) с кадрированием сообщений"
 edition.workspace = true
 version.workspace = true
+license.workspace = true
+
+[dependencies]
