@@ -18,9 +18,10 @@ mod theme;
 mod uno;
 mod update;
 
+use bevy::asset::AssetEvents;
 use bevy::prelude::*;
 use bevy::window::WindowResolution;
-use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass};
+use bevy_egui::{EguiContexts, EguiPlugin, EguiPostUpdateSet, EguiPrimaryContextPass};
 
 /// Top-level screens of the launcher.
 #[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -71,6 +72,12 @@ fn main() {
             debug::DebugPlugin,
             update::UpdatePlugin,
         ))
+        // Whenever egui rasterises new glyphs (new text, a new font size), bevy_egui
+        // replaces the font atlas with a new `Image`. Unless that happens before
+        // `AssetEvents`, the render world only learns about the new image a frame
+        // later, finds no GPU texture for it and skips every egui draw: the whole
+        // HUD blinked out for a frame each time something new appeared on it.
+        .configure_sets(PostUpdate, EguiPostUpdateSet::PostProcessOutput.before(AssetEvents))
         .add_systems(Startup, spawn_camera)
         .add_systems(EguiPrimaryContextPass, install_theme)
         .run();
