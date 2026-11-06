@@ -1,14 +1,19 @@
 name: CI
 
+# Every push to main/master builds the Windows exe and publishes it as a
+# pre-release "build-<run number>" on the Releases page. Pull requests only
+# build and test; they publish nothing.
 on:
   pull_request:
   push:
     branches: [main, master]
   workflow_dispatch:
 
+# Only a newer push to a pull request cancels an older run. Builds on main are
+# never cancelled, so every build reaches the Releases page.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -24,27 +29,57 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test -p uno-core -p monopoly-core -p netcode
 
-  # The real thing: build the launcher for Windows and keep the exe as an artifact.
-  windows:
-    name: Build and test (Windows)
+  # Runs in parallel with the exe build. Kept separate because the debug test
+  # profile compiles Bevy again, which used to delay every exe build.
+  test-windows:
+    name: Tests (Windows)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Test
-        run: cargo test --workspace --features steam
+      - run: cargo test --workspace --features steam
+
+  # Release build only: no test profile, so the compiler does less work.
+  build-windows:
+    name: Build exe (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Build release
         run: cargo build --release -p game-box --features steam
       - name: Package
         shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force dist/game-box | Out-Null
-          Copy-Item target/release/game-box.exe dist/game-box/
-          $dll = Get-ChildItem -Path target/release/build -Recurse -Filter steam_api64.dll | Select-Object -First 1
-          Copy-Item $dll.FullName dist/game-box/
+        run: ./scripts/package-windows.ps1
       - uses: actions/upload-artifact@v4
         with:
-          name: game-box-windows
-          path: dist/game-box
+          name: game-box-windows-x64
+          path: dist/game-box-windows-x64.zip
           if-no-files-found: error
+
+  # Publishes the exe as a pre-release. Pre-releases are skipped by
+  # `releases/latest`, which the launcher's updater reads, so builds from main
+  # never replace the version the updater offers.
+  publish-build:
+    name: Publish build release
+    needs: [core, test-windows, build-windows]
+    if: >-
+      (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'))
+      || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: game-box-windows-x64
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: "Сборка #${{ github.run_number }}"
+          prerelease: true
+          generate_release_notes: true
+          files: game-box-windows-x64.zip
