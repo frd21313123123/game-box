@@ -1,15 +1,16 @@
 name: Release
 
-# Push a tag like v0.1.0 to build the Windows package and publish it as a
-# GitHub release.
+# Builds the Windows package and publishes it as a GitHub release.
+# Either push a tag like v0.1.0, or run the workflow manually: without a tag
+# input it releases v<version from Cargo.toml> (creating the tag if needed).
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to publish (must already exist)"
-        required: true
+        description: "Tag to publish (default: v<version> from Cargo.toml)"
+        required: false
 
 permissions:
   contents: write
@@ -23,8 +24,19 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+      - name: Resolve tag
+        id: tag
+        shell: pwsh
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') { $tag = $env:GITHUB_REF_NAME }
+          elseif ($env:INPUT_TAG) { $tag = $env:INPUT_TAG }
+          else {
+            $m = Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1
+            $tag = 'v' + $m.Matches[0].Groups[1].Value
+          }
+          "name=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build release
@@ -41,7 +53,8 @@ jobs:
           Compress-Archive -Path dist/game-box -DestinationPath game-box-windows-x64.zip
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
-          name: Game Box ${{ github.event.inputs.tag || github.ref_name }}
+          tag_name: ${{ steps.tag.outputs.name }}
+          target_commitish: ${{ github.sha }}
+          name: Game Box ${{ steps.tag.outputs.name }}
           generate_release_notes: true
           files: game-box-windows-x64.zip
