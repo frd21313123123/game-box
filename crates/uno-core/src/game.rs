@@ -347,7 +347,10 @@ impl UnoGame {
         }
         let player = &mut self.players[seat];
         player.hand.extend(drawn.iter().copied());
-        if player.hand.len() > 2 {
+        // Any new card voids an earlier «last card!»: the call only covers the
+        // hand it was made for (a one-card hand that draws back up to two must
+        // call again before playing down to one).
+        if !drawn.is_empty() {
             player.uno_called = false;
         }
         if player.hand.len() > 1 && self.uno_vulnerable == Some(seat) {

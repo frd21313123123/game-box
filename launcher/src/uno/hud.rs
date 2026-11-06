@@ -435,7 +435,7 @@ pub fn draw_hud(
                 {
                     session.submit_uno(UnoAction::Pass);
                 }
-                let armed = ui.uno_armed && my.hand.len() == 2;
+                let armed = ui.uno_armed && my.hand.len() == 2 && my.uno_called;
                 let label = if armed {
                     "✔ «Последняя!» готово".to_string()
                 } else {
