@@ -155,30 +155,11 @@ mod tests {
     }
 
     #[test]
-    fn draw_four_challenge_success_and_failure() {
+    fn draw_four_makes_next_player_draw_and_skip() {
         let red = Some(CardColor::Red);
-        // Illegal: player 0 still holds a red card.
         let mut g = rigged(
             vec![
-                vec![card(1, None, Face::WildDrawFour), card(2, red, Face::Number(1)), card(8, red, Face::Number(5))],
-                vec![card(3, red, Face::Number(2))],
-                vec![card(4, red, Face::Number(2))],
-            ],
-            card(0, red, Face::Number(9)),
-            CardColor::Red,
-        );
-        g.apply(0, UnoAction::Play { card_id: 1, call_uno: false }).unwrap();
-        g.apply(0, UnoAction::ChooseColor(CardColor::Green)).unwrap();
-        assert!(matches!(g.phase, Phase::Challenge { victim: 1, illegal: true, .. }));
-        g.apply(1, UnoAction::Challenge).unwrap();
-        assert_eq!(g.players[0].hand.len(), 6);
-        assert_eq!(g.players[1].hand.len(), 1);
-        assert_eq!(g.current, 1, "victim plays after a successful challenge");
-
-        // Legal: challenger draws six and loses the turn.
-        let mut g = rigged(
-            vec![
-                vec![card(1, None, Face::WildDrawFour), card(2, Some(CardColor::Blue), Face::Number(1)), card(8, Some(CardColor::Blue), Face::Number(5))],
+                vec![card(1, None, Face::WildDrawFour), card(2, red, Face::Number(1)), card(9, Some(CardColor::Blue), Face::Number(1))],
                 vec![card(3, red, Face::Number(2))],
                 vec![card(4, red, Face::Number(2))],
             ],
@@ -187,25 +168,10 @@ mod tests {
         );
         g.apply(0, UnoAction::Play { card_id: 1, call_uno: false }).unwrap();
         g.apply(0, UnoAction::ChooseColor(CardColor::Blue)).unwrap();
-        g.apply(1, UnoAction::Challenge).unwrap();
-        assert_eq!(g.players[1].hand.len(), 7);
-        assert_eq!(g.current, 2);
-
-        // Accepting: draw four and skip.
-        let mut g = rigged(
-            vec![
-                vec![card(1, None, Face::WildDrawFour), card(2, Some(CardColor::Blue), Face::Number(1)), card(9, Some(CardColor::Blue), Face::Number(1))],
-                vec![card(3, red, Face::Number(2))],
-                vec![card(4, red, Face::Number(2))],
-            ],
-            card(0, red, Face::Number(9)),
-            CardColor::Red,
-        );
-        g.apply(0, UnoAction::Play { card_id: 1, call_uno: false }).unwrap();
-        g.apply(0, UnoAction::ChooseColor(CardColor::Blue)).unwrap();
-        g.apply(1, UnoAction::AcceptDrawFour).unwrap();
         assert_eq!(g.players[1].hand.len(), 5);
+        assert_eq!(g.active_color, CardColor::Blue);
         assert_eq!(g.current, 2);
+        assert_eq!(g.phase, Phase::Turn);
     }
 
     #[test]

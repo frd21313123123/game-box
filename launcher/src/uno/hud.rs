@@ -107,8 +107,6 @@ fn process_events(view: &UnoGame, me: usize, ui: &mut UnoUi, sfx: &mut EventWrit
                     DrawReason::DrawTwo => (format!("{who} берёт +2"), theme::WARN),
                     DrawReason::DrawFour => (format!("{who} берёт +4"), theme::WARN),
                     DrawReason::UnoPenalty => (format!("{who}: штраф +{count}"), theme::BAD),
-                    DrawReason::ChallengeFailed => (format!("{who} проиграл спор: +{count}"), theme::BAD),
-                    DrawReason::ChallengeGuilty => (format!("{who} пойман на блефе: +{count}"), theme::BAD),
                 };
                 if reason != DrawReason::Voluntary {
                     ui.bubbles.push(Bubble::new(seat, format!("+{count}"), theme::BAD));
@@ -148,15 +146,6 @@ fn process_events(view: &UnoGame, me: usize, ui: &mut UnoUi, sfx: &mut EventWrit
                     theme::BAD,
                 );
                 sfx.write(Sfx::Caught);
-            }
-            UnoEvent::Challenged { challenger, offender, success } => {
-                let text = if success {
-                    format!("{} разоблачил блеф {}!", name(view, challenger), name(view, offender))
-                } else {
-                    format!("{} зря оспорил +4", name(view, challenger))
-                };
-                ui.banner = Some(Banner { text: text.clone(), color: theme::WARN, age: 0.0 });
-                feed(ui, text, theme::WARN);
             }
             UnoEvent::Reshuffled => feed(ui, "Сброс перетасован в колоду".into(), theme::TEXT_DIM),
             UnoEvent::RoundWon { seat, points } => {
@@ -397,7 +386,6 @@ pub fn draw_hud(
         Phase::Turn if my_turn => "Ваш ход: сыграйте карту или возьмите из колоды".to_string(),
         Phase::AfterDraw { .. } if my_turn => "Можно сыграть взятую карту или пропустить ход".to_string(),
         Phase::ChooseColor { seat, .. } if *seat == me => "Выберите цвет".to_string(),
-        Phase::Challenge { victim, .. } if *victim == me => "Вам +4 — оспорить?".to_string(),
         Phase::RoundOver { .. } => "Раунд окончен".to_string(),
         Phase::GameOver { .. } => "Игра окончена".to_string(),
         _ => match acting {
@@ -512,31 +500,6 @@ pub fn draw_hud(
                         if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                             session.submit_uno(UnoAction::ChooseColor(c));
                         }
-                    }
-                });
-            });
-        }
-    }
-    if let Phase::Challenge { offender, victim, .. } = view.phase {
-        if victim == me {
-            ui.modal_open = true;
-            modal(&ctx, "challenge", |ui_| {
-                ui_.label(RichText::new("Вам «+4»").font(bold(24.0)));
-                ui_.label(format!(
-                    "{} сыграл «Возьми четыре». Если считаете, что у него была карта текущего цвета, — оспорьте.",
-                    name(&view, offender)
-                ));
-                ui_.label(
-                    RichText::new("Блеф раскрыт — он берёт 4, а вы ходите. Ошиблись — вы берёте 6 и пропускаете ход.")
-                        .color(theme::TEXT_DIM),
-                );
-                ui_.add_space(8.0);
-                ui_.horizontal(|ui_| {
-                    if action_button(ui_, &format!("Оспорить [{}]", binds.label(Action::Challenge)), theme::BAD, true, 200.0).clicked() {
-                        session.submit_uno(UnoAction::Challenge);
-                    }
-                    if action_button(ui_, &format!("Взять 4 карты [{}]", binds.label(Action::Accept)), theme::PANEL_HI, true, 200.0).clicked() {
-                        session.submit_uno(UnoAction::AcceptDrawFour);
                     }
                 });
             });

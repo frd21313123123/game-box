@@ -141,14 +141,6 @@ pub fn keyboard_input(
                 }
             }
         }
-        Phase::Challenge { victim, .. } if victim == me => {
-            if pressed(Action::Challenge) {
-                session.submit_uno(UnoAction::Challenge);
-            } else if pressed(Action::Accept) {
-                session.submit_uno(UnoAction::AcceptDrawFour);
-            }
-            return;
-        }
         _ => {}
     }
 
