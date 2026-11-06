@@ -45,17 +45,9 @@ pub enum Phase {
     ChooseColor {
         seat: usize,
         draw_four: bool,
-        /// The Wild Draw Four was played while holding a card of the active colour.
-        illegal: bool,
         /// Whether play advances after the colour is chosen (false for the
         /// wild flipped as the very first card: the first player then plays).
         advance: bool,
-    },
-    /// `victim` may challenge the Wild Draw Four played by `offender`.
-    Challenge {
-        offender: usize,
-        victim: usize,
-        illegal: bool,
     },
     RoundOver { winner: usize, points: u32 },
     GameOver { winner: usize },
@@ -67,8 +59,6 @@ pub enum DrawReason {
     DrawTwo,
     DrawFour,
     UnoPenalty,
-    ChallengeFailed,
-    ChallengeGuilty,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -83,7 +73,6 @@ pub enum UnoEvent {
     Reversed { direction: Direction },
     UnoCalled { seat: usize },
     UnoCaught { catcher: usize, target: usize },
-    Challenged { challenger: usize, offender: usize, success: bool },
     Reshuffled,
     RoundWon { seat: usize, points: u32 },
     GameWon { seat: usize },
@@ -105,8 +94,6 @@ pub enum UnoAction {
     ChooseColor(CardColor),
     CallUno,
     CatchUno { target: usize },
-    Challenge,
-    AcceptDrawFour,
     NextRound,
 }
 
@@ -221,7 +208,6 @@ impl UnoGame {
         match &self.phase {
             Phase::Turn | Phase::AfterDraw { .. } => Some(self.current),
             Phase::ChooseColor { seat, .. } => Some(*seat),
-            Phase::Challenge { victim, .. } => Some(*victim),
             Phase::RoundOver { .. } | Phase::GameOver { .. } => None,
         }
     }
@@ -339,7 +325,6 @@ impl UnoGame {
                 self.phase = Phase::ChooseColor {
                     seat: first_player,
                     draw_four: false,
-                    illegal: false,
                     advance: false,
                 };
             }
@@ -410,8 +395,6 @@ impl UnoGame {
             UnoAction::ChooseColor(color) => self.choose_color(seat, color),
             UnoAction::CallUno => self.call_uno(seat),
             UnoAction::CatchUno { target } => self.catch_uno(seat, target),
-            UnoAction::Challenge => self.resolve_challenge(seat, true),
-            UnoAction::AcceptDrawFour => self.resolve_challenge(seat, false),
             UnoAction::NextRound => self.next_round(),
         }
     }
@@ -438,13 +421,6 @@ impl UnoGame {
 
         // The previous player is safe from being caught once the next one acts.
         self.uno_vulnerable = None;
-
-        // A Wild Draw Four is only legal without a card of the active colour.
-        let illegal_draw_four = card.face == Face::WildDrawFour
-            && self.players[seat]
-                .hand
-                .iter()
-                .any(|c| c.id != card.id && c.color == Some(self.active_color));
 
         self.players[seat].hand.remove(pos);
         self.discard.push(card);
@@ -513,7 +489,6 @@ impl UnoGame {
                 self.phase = Phase::ChooseColor {
                     seat,
                     draw_four: false,
-                    illegal: false,
                     advance: true,
                 };
             }
@@ -521,7 +496,6 @@ impl UnoGame {
                 self.phase = Phase::ChooseColor {
                     seat,
                     draw_four: true,
-                    illegal: illegal_draw_four,
                     advance: true,
                 };
             }
@@ -566,7 +540,6 @@ impl UnoGame {
         let Phase::ChooseColor {
             seat: chooser,
             draw_four,
-            illegal,
             advance,
         } = self.phase
         else {
@@ -578,53 +551,16 @@ impl UnoGame {
         self.active_color = color;
         self.emit(UnoEvent::ColorChosen { seat, color });
         if draw_four {
+            // No challenges: the next player simply draws four and is skipped.
             let victim = self.next_seat(seat);
-            self.current = victim;
-            self.phase = Phase::Challenge {
-                offender: seat,
-                victim,
-                illegal,
-            };
+            self.draw_cards(victim, 4, DrawReason::DrawFour);
+            self.emit(UnoEvent::Skipped { seat: victim });
+            self.phase = Phase::Turn;
+            self.advance(2);
         } else if advance {
             self.advance(1);
         } else {
             self.phase = Phase::Turn;
-        }
-        Ok(())
-    }
-
-    fn resolve_challenge(&mut self, seat: usize, challenge: bool) -> Result<(), UnoError> {
-        let Phase::Challenge {
-            offender,
-            victim,
-            illegal,
-        } = self.phase
-        else {
-            return Err(UnoError::WrongPhase);
-        };
-        if seat != victim {
-            return Err(UnoError::NotYourTurn);
-        }
-        if !challenge {
-            self.draw_cards(victim, 4, DrawReason::DrawFour);
-            self.emit(UnoEvent::Skipped { seat: victim });
-            self.advance(1);
-            return Ok(());
-        }
-        self.emit(UnoEvent::Challenged {
-            challenger: victim,
-            offender,
-            success: illegal,
-        });
-        if illegal {
-            // Caught bluffing: the offender draws the four, the victim plays on.
-            self.draw_cards(offender, 4, DrawReason::ChallengeGuilty);
-            self.current = victim;
-            self.phase = Phase::Turn;
-        } else {
-            self.draw_cards(victim, 6, DrawReason::ChallengeFailed);
-            self.emit(UnoEvent::Skipped { seat: victim });
-            self.advance(1);
         }
         Ok(())
     }
@@ -711,9 +647,6 @@ impl UnoGame {
         match &mut view.phase {
             Phase::AfterDraw { card_id } if Some(view.current) != viewer => {
                 *card_id = Card::HIDDEN_ID;
-            }
-            Phase::ChooseColor { illegal, .. } | Phase::Challenge { illegal, .. } => {
-                *illegal = false;
             }
             _ => {}
         }

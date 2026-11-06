@@ -61,7 +61,16 @@ pub struct ShoeTop {
 #[derive(Component)]
 pub struct SpotRing {
     seat: usize,
+    /// Index into [`RING_ALPHAS`] of the material the ring wears now.
+    level: usize,
 }
+
+/// Opacity steps of the betting circles: out of the game, idle, and the
+/// steps of the pulse while the table waits for the seat. Each step is its own
+/// material: changing a material asset every frame makes Bevy rebuild its GPU
+/// data and re-specialize every mesh using it, which caused frame drops.
+const RING_ALPHAS: [f32; 8] = [0.15, 0.45, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0];
+const RING_IDLE: usize = 1;
 
 /// Bobbing arrow over the hand being played.
 #[derive(Component)]
@@ -103,7 +112,8 @@ pub struct BjTable {
 #[derive(Resource)]
 pub struct BjAssets {
     art: BjArt,
-    ring_materials: Vec<Handle<StandardMaterial>>,
+    /// Per seat colour, one material per [`RING_ALPHAS`] step.
+    ring_materials: Vec<Vec<Handle<StandardMaterial>>>,
     pointer_material: Handle<StandardMaterial>,
 }
 
@@ -117,13 +127,18 @@ pub fn setup_assets(
     let ring_materials = SEAT_COLORS
         .iter()
         .map(|c| {
-            materials.add(StandardMaterial {
-                base_color: Color::srgba_u8(c[0], c[1], c[2], 150),
-                emissive: LinearRgba::BLACK,
-                alpha_mode: AlphaMode::Blend,
-                unlit: true,
-                ..default()
-            })
+            RING_ALPHAS
+                .iter()
+                .map(|a| {
+                    materials.add(StandardMaterial {
+                        base_color: Color::srgb_u8(c[0], c[1], c[2]).with_alpha(*a),
+                        emissive: LinearRgba::BLACK,
+                        alpha_mode: AlphaMode::Blend,
+                        unlit: true,
+                        ..default()
+                    })
+                })
+                .collect()
         })
         .collect();
     let pointer_material = materials.add(StandardMaterial {
@@ -356,9 +371,9 @@ pub fn spawn_table(
     for seat in 0..n {
         let e = commands
             .spawn((
-                SpotRing { seat },
+                SpotRing { seat, level: RING_IDLE },
                 Mesh3d(ring.clone()),
-                MeshMaterial3d(assets.ring_materials[seat % assets.ring_materials.len()].clone()),
+                MeshMaterial3d(assets.ring_materials[seat % assets.ring_materials.len()][RING_IDLE].clone()),
                 Transform::from_translation(spot_pos(seat, n) + Vec3::Y * 0.003)
                     .with_rotation(Quat::from_rotation_x(-FRAC_PI_2)),
                 NotShadowCaster,
@@ -655,16 +670,16 @@ pub fn sync_table(
 /// in play and the dealer's idle animation.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn animate_table(
+    mut commands: Commands,
     time: Res<Time>,
     session: Res<Session>,
     assets: Res<BjAssets>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     mut blocks: Query<(&ShoeStack, &mut Transform), (Without<ShoeTop>, Without<HandPointer>, Without<Figure>, Without<FigureHead>)>,
     mut tops: Query<(&ShoeTop, &mut Transform), (Without<ShoeStack>, Without<HandPointer>, Without<Figure>, Without<FigureHead>)>,
     mut pointer: Query<&mut Transform, (With<HandPointer>, Without<ShoeStack>, Without<ShoeTop>, Without<Figure>, Without<FigureHead>)>,
     mut figures: Query<(&Figure, &mut Transform, &Children), (Without<FigureHead>, Without<ShoeStack>, Without<ShoeTop>, Without<HandPointer>)>,
     mut heads: Query<&mut Transform, (With<FigureHead>, Without<Figure>, Without<ShoeStack>, Without<ShoeTop>, Without<HandPointer>)>,
-    rings: Query<&SpotRing>,
+    mut rings: Query<(Entity, &mut SpotRing)>,
 ) {
     let Some(view) = session.bj_view() else { return };
     let t = time.elapsed_secs();
@@ -683,15 +698,21 @@ pub fn animate_table(
     }
 
     // Betting circles glow for whoever the table is waiting on.
-    for ring in &rings {
+    for (e, mut ring) in &mut rings {
         let p = &view.players[ring.seat.min(n - 1)];
-        let waiting = view.is_waiting_for(ring.seat);
-        let h = &assets.ring_materials[ring.seat % assets.ring_materials.len()];
-        if let Some(m) = materials.get_mut(h) {
-            let c = SEAT_COLORS[ring.seat % SEAT_COLORS.len()];
-            let base = Color::srgb_u8(c[0], c[1], c[2]);
-            let pulse = if waiting { 0.75 + (t * 4.0).sin() * 0.25 } else if p.out { 0.15 } else { 0.45 };
-            m.base_color = base.with_alpha(pulse);
+        let level = if view.is_waiting_for(ring.seat) {
+            // 0.5..=1.0 in steps of 0.1.
+            let pulse = 0.75 + (t * 4.0).sin() * 0.25;
+            (2 + ((pulse - 0.5) / 0.1).round() as usize).min(RING_ALPHAS.len() - 1)
+        } else if p.out {
+            0
+        } else {
+            RING_IDLE
+        };
+        if ring.level != level {
+            ring.level = level;
+            let set = &assets.ring_materials[ring.seat % assets.ring_materials.len()];
+            commands.entity(e).insert(MeshMaterial3d(set[level].clone()));
         }
     }
 

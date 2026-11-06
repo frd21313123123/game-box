@@ -261,3 +261,34 @@ pub fn modal(ctx: &egui::Context, id: &str, add: impl FnOnce(&mut Ui)) {
         .frame(card_frame().inner_margin(Margin::same(22)))
         .show(ctx, add);
 }
+
+/// A process-wide unique number, for egui ids of short-lived widgets.
+pub fn unique_key() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
+/// Shows an [`egui::Area`] and keeps it from jumping when its size changes.
+///
+/// egui places an area by its pivot or anchor using the size it had on the
+/// previous frame. So when the content changes size (a longer status line,
+/// other buttons, a new chip count) a centred or right/bottom-aligned area is
+/// drawn one frame in the wrong place and snaps back on the next: the HUD
+/// visibly flickers. When the size changed, this pass is discarded and egui
+/// lays the UI out again with the new size before anything is painted.
+pub fn show_area<R>(
+    ctx: &egui::Context,
+    area: egui::Area,
+    add_contents: impl FnOnce(&mut Ui) -> R,
+) -> egui::InnerResponse<R> {
+    let id = area.layer().id;
+    let before = ctx.memory(|m| m.area_rect(id)).map(|r| r.size());
+    let response = area.show(ctx, add_contents);
+    let after = response.response.rect.size();
+    let resized = before.is_none_or(|b| (b - after).abs().max_elem() > 0.5);
+    if resized && !ctx.will_discard() {
+        ctx.request_discard("HUD area changed size");
+    }
+    response
+}

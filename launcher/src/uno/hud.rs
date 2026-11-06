@@ -25,10 +25,18 @@ pub struct FeedItem {
 }
 
 pub struct Bubble {
+    /// Stable egui id: the list index shifts as old bubbles expire.
+    key: u64,
     seat: usize,
     text: String,
     color: Color32,
     age: f32,
+}
+
+impl Bubble {
+    fn new(seat: usize, text: impl Into<String>, color: Color32) -> Self {
+        Bubble { key: crate::theme::unique_key(), seat, text: text.into(), color, age: 0.0 }
+    }
 }
 
 pub struct Banner {
@@ -99,11 +107,9 @@ fn process_events(view: &UnoGame, me: usize, ui: &mut UnoUi, sfx: &mut EventWrit
                     DrawReason::DrawTwo => (format!("{who} берёт +2"), theme::WARN),
                     DrawReason::DrawFour => (format!("{who} берёт +4"), theme::WARN),
                     DrawReason::UnoPenalty => (format!("{who}: штраф +{count}"), theme::BAD),
-                    DrawReason::ChallengeFailed => (format!("{who} проиграл спор: +{count}"), theme::BAD),
-                    DrawReason::ChallengeGuilty => (format!("{who} пойман на блефе: +{count}"), theme::BAD),
                 };
                 if reason != DrawReason::Voluntary {
-                    ui.bubbles.push(Bubble { seat, text: format!("+{count}"), color: theme::BAD, age: 0.0 });
+                    ui.bubbles.push(Bubble::new(seat, format!("+{count}"), theme::BAD));
                 }
                 feed(ui, text, color);
             }
@@ -117,7 +123,7 @@ fn process_events(view: &UnoGame, me: usize, ui: &mut UnoUi, sfx: &mut EventWrit
                 });
             }
             UnoEvent::Skipped { seat } => {
-                ui.bubbles.push(Bubble { seat, text: "Пропуск!".into(), color: theme::WARN, age: 0.0 });
+                ui.bubbles.push(Bubble::new(seat, "Пропуск!", theme::WARN));
                 if seat == me {
                     ui.banner = Some(Banner { text: "Вы пропускаете ход".into(), color: theme::WARN, age: 0.0 });
                 }
@@ -128,27 +134,18 @@ fn process_events(view: &UnoGame, me: usize, ui: &mut UnoUi, sfx: &mut EventWrit
                 sfx.write(Sfx::Special);
             }
             UnoEvent::UnoCalled { seat } => {
-                ui.bubbles.push(Bubble { seat, text: "Последняя!".into(), color: theme::GOLD, age: 0.0 });
+                ui.bubbles.push(Bubble::new(seat, "Последняя!", theme::GOLD));
                 feed(ui, format!("{} объявляет: «Последняя!»", name(view, seat)), theme::GOLD);
                 sfx.write(Sfx::LastCard);
             }
             UnoEvent::UnoCaught { catcher, target } => {
-                ui.bubbles.push(Bubble { seat: catcher, text: "Попался!".into(), color: theme::BAD, age: 0.0 });
+                ui.bubbles.push(Bubble::new(catcher, "Попался!", theme::BAD));
                 feed(
                     ui,
                     format!("{} ловит {} без объявления!", name(view, catcher), name(view, target)),
                     theme::BAD,
                 );
                 sfx.write(Sfx::Caught);
-            }
-            UnoEvent::Challenged { challenger, offender, success } => {
-                let text = if success {
-                    format!("{} разоблачил блеф {}!", name(view, challenger), name(view, offender))
-                } else {
-                    format!("{} зря оспорил +4", name(view, challenger))
-                };
-                ui.banner = Some(Banner { text: text.clone(), color: theme::WARN, age: 0.0 });
-                feed(ui, text, theme::WARN);
             }
             UnoEvent::Reshuffled => feed(ui, "Сброс перетасован в колоду".into(), theme::TEXT_DIM),
             UnoEvent::RoundWon { seat, points } => {
@@ -231,11 +228,10 @@ pub fn draw_hud(
         let p = &view.players[seat];
         let is_acting = acting == Some(seat);
         let seat_kind = session.lobby.seats.get(seat).map(|s| s.kind);
-        egui::Area::new(egui::Id::new(("plate", seat)))
+        crate::theme::show_area(&ctx, egui::Area::new(egui::Id::new(("plate", seat)))
             .fixed_pos(Pos2::new(pos.x, pos.y.max(120.0)))
             .pivot(Align2::CENTER_BOTTOM)
-            .interactable(false)
-            .show(&ctx, |ui_| {
+            .interactable(false), |ui_| {
                 let stroke = if is_acting {
                     theme::stroke(2.0, color32(view.active_color))
                 } else {
@@ -270,7 +266,7 @@ pub fn draw_hud(
 
     // ---- speech bubbles -----------------------------------------------------------
     let mut stacked: std::collections::HashMap<usize, f32> = Default::default();
-    for (i, b) in ui.bubbles.iter().enumerate().rev() {
+    for b in ui.bubbles.iter().rev() {
         let stack = stacked.entry(b.seat).or_insert(0.0);
         let stack_offset = *stack;
         *stack += 34.0;
@@ -286,12 +282,11 @@ pub fn draw_hud(
         let Some(anchor) = anchor else { continue };
         let rise = b.age * 18.0;
         let alpha = ((BUBBLE_LIFE - b.age) / 0.4).clamp(0.0, 1.0);
-        egui::Area::new(egui::Id::new(("bubble", i)))
+        crate::theme::show_area(&ctx, egui::Area::new(egui::Id::new(("bubble", b.key)))
             .fixed_pos(Pos2::new(anchor.x, anchor.y - 40.0 - rise - stack_offset))
             .pivot(Align2::CENTER_BOTTOM)
             .interactable(false)
-            .order(egui::Order::Foreground)
-            .show(&ctx, |ui_| {
+            .order(egui::Order::Foreground), |ui_| {
                 egui::Frame::new()
                     .fill(with_alpha(b.color, (230.0 * alpha) as u8))
                     .corner_radius(CornerRadius::same(16))
@@ -304,9 +299,8 @@ pub fn draw_hud(
     }
 
     // ---- top-left: game info ------------------------------------------------------
-    egui::Area::new(egui::Id::new("uno-info"))
-        .fixed_pos(Pos2::new(16.0, 16.0))
-        .show(&ctx, |ui_| {
+    crate::theme::show_area(&ctx, egui::Area::new(egui::Id::new("uno-info"))
+        .fixed_pos(Pos2::new(16.0, 16.0)), |ui_| {
             hud_frame().show(ui_, |ui_| {
                 ui_.set_min_width(230.0);
                 ui_.label(RichText::new("Уно").font(bold(20.0)));
@@ -333,9 +327,8 @@ pub fn draw_hud(
         });
 
     // ---- top-right: buttons ---------------------------------------------------------
-    egui::Area::new(egui::Id::new("uno-menu"))
-        .anchor(Align2::RIGHT_TOP, Vec2::new(-16.0, 16.0))
-        .show(&ctx, |ui_| {
+    crate::theme::show_area(&ctx, egui::Area::new(egui::Id::new("uno-menu"))
+        .anchor(Align2::RIGHT_TOP, Vec2::new(-16.0, 16.0)), |ui_| {
             ui_.horizontal(|ui_| {
                 if ui_.button("⚙").on_hover_text("Управление: клавиши и их назначение").clicked() {
                     ui.show_settings = true;
@@ -353,10 +346,9 @@ pub fn draw_hud(
         });
 
     // ---- event feed -----------------------------------------------------------------
-    egui::Area::new(egui::Id::new("uno-feed"))
+    crate::theme::show_area(&ctx, egui::Area::new(egui::Id::new("uno-feed"))
         .anchor(Align2::LEFT_BOTTOM, Vec2::new(16.0, -16.0))
-        .interactable(false)
-        .show(&ctx, |ui_| {
+        .interactable(false), |ui_| {
             ui_.set_max_width(300.0);
             for item in &ui.feed {
                 let alpha = ((FEED_LIFE - item.age) / 1.5).clamp(0.0, 1.0);
@@ -394,7 +386,6 @@ pub fn draw_hud(
         Phase::Turn if my_turn => "Ваш ход: сыграйте карту или возьмите из колоды".to_string(),
         Phase::AfterDraw { .. } if my_turn => "Можно сыграть взятую карту или пропустить ход".to_string(),
         Phase::ChooseColor { seat, .. } if *seat == me => "Выберите цвет".to_string(),
-        Phase::Challenge { victim, .. } if *victim == me => "Вам +4 — оспорить?".to_string(),
         Phase::RoundOver { .. } => "Раунд окончен".to_string(),
         Phase::GameOver { .. } => "Игра окончена".to_string(),
         _ => match acting {
@@ -402,10 +393,9 @@ pub fn draw_hud(
             None => String::new(),
         },
     };
-    egui::Area::new(egui::Id::new("uno-status"))
+    crate::theme::show_area(&ctx, egui::Area::new(egui::Id::new("uno-status"))
         .anchor(Align2::CENTER_TOP, Vec2::new(0.0, 16.0))
-        .interactable(false)
-        .show(&ctx, |ui_| {
+        .interactable(false), |ui_| {
             hud_frame()
                 .inner_margin(egui::Margin::symmetric(18, 8))
                 .stroke(if my_turn {
@@ -423,9 +413,8 @@ pub fn draw_hud(
     let can_call = keys::can_call_last(&view, me);
     let catch_target = view.uno_vulnerable.filter(|t| *t != me);
 
-    egui::Area::new(egui::Id::new("uno-actions"))
-        .anchor(Align2::RIGHT_BOTTOM, Vec2::new(-20.0, -20.0))
-        .show(&ctx, |ui_| {
+    crate::theme::show_area(&ctx, egui::Area::new(egui::Id::new("uno-actions"))
+        .anchor(Align2::RIGHT_BOTTOM, Vec2::new(-20.0, -20.0)), |ui_| {
             hud_frame().show(ui_, |ui_| {
                 ui_.set_width(220.0);
                 ui_.horizontal(|ui_| {
@@ -511,31 +500,6 @@ pub fn draw_hud(
                         if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                             session.submit_uno(UnoAction::ChooseColor(c));
                         }
-                    }
-                });
-            });
-        }
-    }
-    if let Phase::Challenge { offender, victim, .. } = view.phase {
-        if victim == me {
-            ui.modal_open = true;
-            modal(&ctx, "challenge", |ui_| {
-                ui_.label(RichText::new("Вам «+4»").font(bold(24.0)));
-                ui_.label(format!(
-                    "{} сыграл «Возьми четыре». Если считаете, что у него была карта текущего цвета, — оспорьте.",
-                    name(&view, offender)
-                ));
-                ui_.label(
-                    RichText::new("Блеф раскрыт — он берёт 4, а вы ходите. Ошиблись — вы берёте 6 и пропускаете ход.")
-                        .color(theme::TEXT_DIM),
-                );
-                ui_.add_space(8.0);
-                ui_.horizontal(|ui_| {
-                    if action_button(ui_, &format!("Оспорить [{}]", binds.label(Action::Challenge)), theme::BAD, true, 200.0).clicked() {
-                        session.submit_uno(UnoAction::Challenge);
-                    }
-                    if action_button(ui_, &format!("Взять 4 карты [{}]", binds.label(Action::Accept)), theme::PANEL_HI, true, 200.0).clicked() {
-                        session.submit_uno(UnoAction::AcceptDrawFour);
                     }
                 });
             });

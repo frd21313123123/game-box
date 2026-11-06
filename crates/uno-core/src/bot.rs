@@ -10,15 +10,6 @@ pub fn bot_action(game: &UnoGame, seat: usize, rng: &mut Rng) -> Option<UnoActio
         Phase::ChooseColor { seat: chooser, .. } if *chooser == seat => {
             Some(UnoAction::ChooseColor(best_color(&game.players[seat].hand, rng)))
         }
-        Phase::Challenge { victim, offender, .. } if *victim == seat => {
-            // Challenge more eagerly when the offender is about to win.
-            let p = if game.players[*offender].hand.len() <= 2 { 0.45 } else { 0.25 };
-            Some(if rng.chance(p) {
-                UnoAction::Challenge
-            } else {
-                UnoAction::AcceptDrawFour
-            })
-        }
         Phase::AfterDraw { card_id } if game.current == seat => {
             let hand = &game.players[seat].hand;
             let drawn = hand.iter().find(|c| c.id == *card_id)?;
@@ -65,10 +56,6 @@ fn choose_card(game: &UnoGame, seat: usize, rng: &mut Rng) -> Option<Card> {
     let next_is_threat = game.players[next].hand.len() <= 2;
     let counts = color_counts(hand);
 
-    let has_active_color = hand
-        .iter()
-        .any(|c| c.color == Some(game.active_color));
-
     let score = |c: &Card| -> f32 {
         let mut s = 0.0;
         match c.face {
@@ -79,10 +66,6 @@ fn choose_card(game: &UnoGame, seat: usize, rng: &mut Rng) -> Option<Card> {
             Face::Wild => s -= if hand.len() <= 2 { -5.0 } else { 15.0 },
             Face::WildDrawFour => {
                 s -= if next_is_threat { -20.0 } else { 25.0 };
-                if has_active_color {
-                    // Bluffing is risky; bots rarely do it.
-                    s -= 40.0;
-                }
             }
         }
         if let Some(color) = c.color {

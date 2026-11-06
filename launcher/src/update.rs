@@ -274,10 +274,9 @@ fn update_banner(mut contexts: EguiContexts, mut updater: ResMut<Updater>) -> Re
     }
 
     let mut start = false;
-    egui::Area::new(egui::Id::new("update_banner"))
+    crate::theme::show_area(&ctx, egui::Area::new(egui::Id::new("update_banner"))
         .anchor(Align2::LEFT_BOTTOM, Vec2::new(28.0, -20.0))
-        .order(egui::Order::Foreground)
-        .show(&ctx, |ui| {
+        .order(egui::Order::Foreground), |ui| {
             egui::Frame::new()
                 .fill(theme::PANEL)
                 .stroke(theme::stroke(1.0, theme::with_alpha(theme::ACCENT, 160)))

@@ -25,10 +25,18 @@ pub struct FeedItem {
 }
 
 pub struct Bubble {
+    /// Stable egui id: the list index shifts as old bubbles expire.
+    key: u64,
     seat: usize,
     text: String,
     color: Color32,
     age: f32,
+}
+
+impl Bubble {
+    fn new(seat: usize, text: impl Into<String>, color: Color32) -> Self {
+        Bubble { key: crate::theme::unique_key(), seat, text: text.into(), color, age: 0.0 }
+    }
 }
 
 pub struct Banner {
@@ -103,7 +111,7 @@ fn process_events(view: &BjGame, me: usize, ui: &mut BjUi, sfx: &mut EventWriter
         }
     };
     let bubble = |ui: &mut BjUi, seat: usize, text: String, color: Color32| {
-        ui.bubbles.push(Bubble { seat, text, color, age: 0.0 });
+        ui.bubbles.push(Bubble::new(seat, text, color));
     };
     let mut settled_me = false;
     for e in events {
@@ -309,11 +317,10 @@ pub fn draw_hud(
         let is_me = seat == me;
         let kind = session.lobby.seats.get(seat).map(|s| s.kind);
         let (status, status_color) = seat_status(&view, seat);
-        egui::Area::new(egui::Id::new(("bj-plate", seat)))
+        crate::theme::show_area(&ctx, egui::Area::new(egui::Id::new(("bj-plate", seat)))
             .fixed_pos(Pos2::new(pos.x, pos.y.min(screen.bottom() - 70.0)))
             .pivot(Align2::CENTER_TOP)
-            .interactable(false)
-            .show(&ctx, |ui_| {
+            .interactable(false), |ui_| {
                 let stroke = if waiting {
                     theme::stroke(2.0, theme::GOLD)
                 } else if is_me {
@@ -387,19 +394,18 @@ pub fn draw_hud(
 
     // ---- speech bubbles ---------------------------------------------------------------------------
     let mut stacked: std::collections::HashMap<usize, f32> = Default::default();
-    for (i, b) in ui.bubbles.iter().enumerate().rev() {
+    for b in ui.bubbles.iter().rev() {
         let stack = stacked.entry(b.seat).or_insert(0.0);
         let offset = *stack;
         *stack += 34.0;
         let Some(anchor) = project(super::scene::spot_pos(b.seat, n) + Vec3::Y * 0.4) else { continue };
         let rise = b.age * 18.0;
         let alpha = ((BUBBLE_LIFE - b.age) / 0.4).clamp(0.0, 1.0);
-        egui::Area::new(egui::Id::new(("bj-bubble", i)))
+        crate::theme::show_area(&ctx, egui::Area::new(egui::Id::new(("bj-bubble", b.key)))
             .fixed_pos(Pos2::new(anchor.x, anchor.y - 30.0 - rise - offset))
             .pivot(Align2::CENTER_BOTTOM)
             .interactable(false)
-            .order(egui::Order::Foreground)
-            .show(&ctx, |ui_| {
+            .order(egui::Order::Foreground), |ui_| {
                 egui::Frame::new()
                     .fill(with_alpha(b.color, (230.0 * alpha) as u8))
                     .corner_radius(CornerRadius::same(16))
@@ -412,9 +418,8 @@ pub fn draw_hud(
     }
 
     // ---- top-left: game info --------------------------------------------------------------------
-    egui::Area::new(egui::Id::new("bj-info"))
-        .fixed_pos(Pos2::new(16.0, 16.0))
-        .show(&ctx, |ui_| {
+    crate::theme::show_area(&ctx, egui::Area::new(egui::Id::new("bj-info"))
+        .fixed_pos(Pos2::new(16.0, 16.0)), |ui_| {
             hud_frame().show(ui_, |ui_| {
                 ui_.set_min_width(240.0);
                 ui_.label(RichText::new("Блэкджек").font(bold(20.0)));
@@ -432,9 +437,8 @@ pub fn draw_hud(
         });
 
     // ---- top-right: buttons ------------------------------------------------------------------------
-    egui::Area::new(egui::Id::new("bj-menu"))
-        .anchor(Align2::RIGHT_TOP, Vec2::new(-16.0, 16.0))
-        .show(&ctx, |ui_| {
+    crate::theme::show_area(&ctx, egui::Area::new(egui::Id::new("bj-menu"))
+        .anchor(Align2::RIGHT_TOP, Vec2::new(-16.0, 16.0)), |ui_| {
             ui_.horizontal(|ui_| {
                 if ui_.button("⚙").on_hover_text("Управление: клавиши и их назначение").clicked() {
                     ui.show_settings = true;
@@ -452,10 +456,9 @@ pub fn draw_hud(
         });
 
     // ---- event feed ----------------------------------------------------------------------------------
-    egui::Area::new(egui::Id::new("bj-feed"))
+    crate::theme::show_area(&ctx, egui::Area::new(egui::Id::new("bj-feed"))
         .anchor(Align2::LEFT_BOTTOM, Vec2::new(16.0, -16.0))
-        .interactable(false)
-        .show(&ctx, |ui_| {
+        .interactable(false), |ui_| {
             ui_.set_max_width(300.0);
             for item in &ui.feed {
                 let alpha = ((FEED_LIFE - item.age) / 1.5).clamp(0.0, 1.0);
@@ -503,10 +506,9 @@ pub fn draw_hud(
         Phase::RoundOver => "Раунд окончен".to_string(),
         Phase::GameOver { .. } => "Игра окончена".to_string(),
     };
-    egui::Area::new(egui::Id::new("bj-status"))
+    crate::theme::show_area(&ctx, egui::Area::new(egui::Id::new("bj-status"))
         .anchor(Align2::CENTER_TOP, Vec2::new(0.0, 16.0))
-        .interactable(false)
-        .show(&ctx, |ui_| {
+        .interactable(false), |ui_| {
             hud_frame()
                 .inner_margin(egui::Margin::symmetric(18, 8))
                 .stroke(if waiting_me { theme::stroke(2.0, theme::GOLD) } else { theme::stroke(1.0, Color32::from_white_alpha(18)) })
@@ -518,9 +520,8 @@ pub fn draw_hud(
     // ---- bottom-right: the player's controls -------------------------------------------------------------
     let hint = |action: Action| format!("  [{}]", binds.label(action));
     const W: f32 = 250.0;
-    egui::Area::new(egui::Id::new("bj-actions"))
-        .anchor(Align2::RIGHT_BOTTOM, Vec2::new(-20.0, -20.0))
-        .show(&ctx, |ui_| {
+    crate::theme::show_area(&ctx, egui::Area::new(egui::Id::new("bj-actions"))
+        .anchor(Align2::RIGHT_BOTTOM, Vec2::new(-20.0, -20.0)), |ui_| {
             hud_frame().show(ui_, |ui_| {
                 ui_.set_width(W);
                 ui_.horizontal(|ui_| {
@@ -634,10 +635,9 @@ pub fn draw_hud(
 
     // ---- results of the round (left, under the info) ----------------------------------------------------
     if view.phase == Phase::RoundOver {
-        egui::Area::new(egui::Id::new("bj-results"))
+        crate::theme::show_area(&ctx, egui::Area::new(egui::Id::new("bj-results"))
             .fixed_pos(Pos2::new(16.0, 190.0))
-            .interactable(false)
-            .show(&ctx, |ui_| {
+            .interactable(false), |ui_| {
                 hud_frame().show(ui_, |ui_| {
                     ui_.set_min_width(240.0);
                     ui_.label(RichText::new("Итоги раунда").font(bold(17.0)));
@@ -770,11 +770,10 @@ pub fn draw_hud(
 
 /// A small rounded label pinned to a point on the table.
 fn pill(ctx: &egui::Context, id: (&str, usize), pos: Pos2, text: &str, color: Color32, highlight: bool) {
-    egui::Area::new(egui::Id::new(id))
+    crate::theme::show_area(ctx, egui::Area::new(egui::Id::new(id))
         .fixed_pos(pos)
         .pivot(Align2::CENTER_BOTTOM)
-        .interactable(false)
-        .show(ctx, |ui_| {
+        .interactable(false), |ui_| {
             egui::Frame::new()
                 .fill(Color32::from_rgba_unmultiplied(12, 14, 18, 215))
                 .stroke(if highlight { theme::stroke(2.0, theme::GOLD) } else { theme::stroke(1.0, Color32::from_white_alpha(30)) })

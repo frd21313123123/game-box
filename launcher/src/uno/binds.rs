@@ -25,12 +25,10 @@ pub enum Action {
     Yellow,
     Green,
     Blue,
-    Challenge,
-    Accept,
 }
 
 /// Every action, in the order the settings dialog lists them.
-pub const ACTIONS: [Action; 16] = [
+pub const ACTIONS: [Action; 14] = [
     Action::Left,
     Action::Right,
     Action::Play,
@@ -45,8 +43,6 @@ pub const ACTIONS: [Action; 16] = [
     Action::Yellow,
     Action::Green,
     Action::Blue,
-    Action::Challenge,
-    Action::Accept,
 ];
 
 impl BindAction for Action {
@@ -68,8 +64,6 @@ impl BindAction for Action {
             Action::Yellow => "yellow",
             Action::Green => "green",
             Action::Blue => "blue",
-            Action::Challenge => "challenge",
-            Action::Accept => "accept",
         }
     }
 
@@ -89,8 +83,6 @@ impl BindAction for Action {
             Action::Yellow => "Заказать жёлтый",
             Action::Green => "Заказать зелёный",
             Action::Blue => "Заказать синий",
-            Action::Challenge => "Оспорить «+4»",
-            Action::Accept => "Взять 4 карты",
         }
     }
 
@@ -110,8 +102,6 @@ impl BindAction for Action {
             Action::Yellow => KeyCode::Digit2,
             Action::Green => KeyCode::Digit3,
             Action::Blue => KeyCode::Digit4,
-            Action::Challenge => KeyCode::KeyX,
-            Action::Accept => KeyCode::KeyA,
         }
     }
 }

@@ -191,7 +191,6 @@ fn drive_bots(time: Res<Time>, mut session: ResMut<Session>, mut clock: ResMut<B
         clock.acting = Some(key);
         let think = match game.phase {
             Phase::ChooseColor { .. } => 0.7,
-            Phase::Challenge { .. } => 1.1,
             Phase::AfterDraw { .. } => 0.8,
             _ => 1.0 + clock.rng.next_f32() * 0.7,
         };
