@@ -6,6 +6,7 @@ name: Release
 on:
   push:
     tags: ["v*"]
+    branches: [claude/rust-game-launcher-px1e6e] # TEMP: first release, removed right after
   workflow_dispatch:
     inputs:
       tag:
