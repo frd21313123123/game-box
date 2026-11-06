@@ -1,0 +1,4 @@
+/target
+**/*.rs.bk
+steam_appid.txt
+game-box.toml

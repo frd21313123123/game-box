@@ -1,0 +1,24 @@
+[workspace]
+resolver = "2"
+members = ["crates/uno-core", "crates/monopoly-core", "crates/netcode", "launcher"]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Faster dev builds: optimize dependencies (Bevy is very slow at opt-level 0),
+# keep our own crates quick to recompile.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
