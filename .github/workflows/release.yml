@@ -1,0 +1,47 @@
+name: Release
+
+# Push a tag like v0.1.0 to build the Windows package and publish it as a
+# GitHub release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish (must already exist)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    name: Windows package
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build release
+        run: cargo build --release -p game-box --features steam
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/game-box | Out-Null
+          Copy-Item target/release/game-box.exe dist/game-box/
+          $dll = Get-ChildItem -Path target/release/build -Recurse -Filter steam_api64.dll | Select-Object -First 1
+          Copy-Item $dll.FullName dist/game-box/
+          Copy-Item README.md dist/game-box/
+          Copy-Item assets/fonts/LICENSE-Inter.txt dist/game-box/
+          Compress-Archive -Path dist/game-box -DestinationPath game-box-windows-x64.zip
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: Game Box ${{ github.event.inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          files: game-box-windows-x64.zip
