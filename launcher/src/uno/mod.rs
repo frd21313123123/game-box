@@ -1,4 +1,4 @@
-//! «Последняя карта» — a shedding card game in the classic four-colour style,
+//! «Уно» — a shedding card game in the classic four-colour style,
 //! played at a 3D table.
 
 mod art;

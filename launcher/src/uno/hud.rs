@@ -298,7 +298,7 @@ pub fn draw_hud(
         .show(&ctx, |ui_| {
             hud_frame().show(ui_, |ui_| {
                 ui_.set_min_width(230.0);
-                ui_.label(RichText::new("Последняя карта").font(bold(20.0)));
+                ui_.label(RichText::new("Уно").font(bold(20.0)));
                 let target = if view.target_score == 0 {
                     "одна партия".to_string()
                 } else {

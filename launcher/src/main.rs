@@ -1,4 +1,4 @@
-//! Game Box — a launcher with two table games: «Монополия» and «Последняя карта».
+//! Game Box — a launcher with two table games: «Монополия» and «Уно».
 
 // Hide the console window on Windows release builds.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
