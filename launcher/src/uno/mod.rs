@@ -1,8 +1,10 @@
 //! «Уно» — a shedding card game in the classic four-colour style,
 //! played at a 3D table.
 
+pub mod binds;
 mod art;
 mod hud;
+mod keys;
 mod scene;
 
 use std::collections::VecDeque;
@@ -27,6 +29,12 @@ pub struct UnoUi {
     pub last_played_by: Option<usize>,
     pub confirm_leave: bool,
     pub show_scores: bool,
+    /// Settings dialog with the keyboard controls.
+    pub show_settings: bool,
+    /// Action waiting for a key press in the settings dialog.
+    pub capture: Option<binds::Action>,
+    /// Card selected with the keyboard (highlighted in the hand).
+    pub cursor: Option<u16>,
     hud_seq: u64,
     feed: VecDeque<hud::FeedItem>,
     bubbles: Vec<hud::Bubble>,
@@ -40,8 +48,21 @@ struct BotClock {
     catch: f32,
     round: u32,
     acting: Option<(usize, u64)>,
+    /// The open «last card!» window: who forgot, and at which game event.
+    vuln: Option<(usize, u64)>,
+    /// Seconds the current window has been open.
+    vuln_open: f32,
+    /// Seconds a bot waits before it notices the window (chosen per window).
+    vuln_delay: f32,
     rng: Rng,
 }
+
+/// Bots notice a forgotten «last card!» only after this many seconds...
+const CATCH_DELAY_MIN: f32 = 2.5;
+/// ...plus up to this many more, picked at random for each window.
+const CATCH_DELAY_SPREAD: f32 = 1.5;
+/// Chance per check (every 0.45 s) that a bot who has noticed actually catches.
+const CATCH_CHANCE: f32 = 0.2;
 
 impl Default for BotClock {
     fn default() -> Self {
@@ -50,6 +71,9 @@ impl Default for BotClock {
             catch: 0.0,
             round: 0,
             acting: None,
+            vuln: None,
+            vuln_open: 0.0,
+            vuln_delay: 0.0,
             rng: Rng::new(
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -71,6 +95,7 @@ impl Plugin for UnoPlugin {
                 Update,
                 (
                     drive_bots,
+                    keys::keyboard_input,
                     scene::hand_input,
                     scene::sync_table,
                     scene::layout_cards,
@@ -107,6 +132,15 @@ fn drive_bots(time: Res<Time>, mut session: ResMut<Session>, mut clock: ResMut<B
         clock.acting = None;
     }
 
+    // Time the «last card!» window: bots react slowly to a forgotten call.
+    let window = game.uno_vulnerable.map(|t| (t, game.event_seq));
+    if window != clock.vuln {
+        clock.vuln = window;
+        clock.vuln_open = 0.0;
+        clock.vuln_delay = CATCH_DELAY_MIN + clock.rng.next_f32() * CATCH_DELAY_SPREAD;
+    }
+    clock.vuln_open += dt;
+
     // Catching a forgotten "last card!" call.
     clock.catch += dt;
     if clock.catch >= 0.45 {
@@ -117,11 +151,11 @@ fn drive_bots(time: Res<Time>, mut session: ResMut<Session>, mut clock: ResMut<B
             if is_bot(&session, target) && clock.rng.chance(0.3) {
                 // The bot remembers to call it itself.
                 action = Some((target, UnoAction::CallUno));
-            } else {
+            } else if clock.vuln_open >= clock.vuln_delay {
                 for seat in 0..n {
                     if seat != target && is_bot(&session, seat) {
                         let mut rng = clock.rng;
-                        if let Some(a) = bot_catch(game, seat, &mut rng, 0.22) {
+                        if let Some(a) = bot_catch(game, seat, &mut rng, CATCH_CHANCE) {
                             action = Some((seat, a));
                         }
                         clock.rng = rng;

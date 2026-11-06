@@ -94,8 +94,8 @@ pub struct TurnMarker;
 #[derive(Resource, Default)]
 pub struct Table {
     seats: usize,
-    me: usize,
-    my_hand: Vec<(u16, Entity)>,
+    pub(super) me: usize,
+    pub(super) my_hand: Vec<(u16, Entity)>,
     opp_hands: Vec<Vec<Entity>>,
     pile: VecDeque<(Entity, Transform)>,
     last_seq: u64,
@@ -851,7 +851,9 @@ pub fn layout_cards(
         Vec::new()
     };
     for (i, (id, e)) in table.my_hand.iter().enumerate() {
-        let lift = if ui.hovered == Some(*id) {
+        // The card under the mouse or the keyboard selection rises.
+        let focused = ui.hovered == Some(*id) || ui.cursor == Some(*id);
+        let lift = if focused {
             0.14
         } else if playable.contains(id) {
             0.05
@@ -860,7 +862,7 @@ pub fn layout_cards(
         };
         if let Ok(mut m) = motions.get_mut(*e) {
             let mut slot = my_hand_slot(cam, i, count, lift);
-            if ui.hovered == Some(*id) {
+            if focused {
                 slot.scale *= 1.08;
             }
             m.target = slot;
@@ -1154,22 +1156,7 @@ pub fn hand_input(
     }
     let my_turn = view.acting_seat() == Some(me);
     if let Some(id) = ui.hovered {
-        if !my_turn {
-            session.notify("Сейчас не ваш ход");
-            return;
-        }
-        let Some(card) = view.players[me].hand.iter().find(|c| c.id == id).copied() else { return };
-        if !view.playable_cards(me).iter().any(|c| c.id == id) {
-            if matches!(view.phase, Phase::AfterDraw { .. }) {
-                session.notify("После добора можно сыграть только взятую карту");
-            } else {
-                session.notify(format!("«{}» сюда не подходит", card.describe_ru()));
-            }
-            return;
-        }
-        let call_uno = ui.uno_armed && view.players[me].hand.len() == 2;
-        ui.uno_armed = false;
-        session.submit_uno(UnoAction::Play { card_id: id, call_uno });
+        super::keys::play_card(&mut session, &mut ui, &view, me, id);
     } else if ui.deck_hovered && my_turn && view.phase == Phase::Turn {
         session.submit_uno(UnoAction::Draw);
     }

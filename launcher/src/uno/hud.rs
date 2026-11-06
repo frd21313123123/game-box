@@ -6,9 +6,12 @@ use bevy_egui::egui::{self, Align2, Color32, CornerRadius, Pos2, RichText, Strok
 use bevy_egui::EguiContexts;
 use uno_core::{Card, CardColor, DrawReason, Phase, UnoAction, UnoEvent, UnoGame};
 
+use super::binds::{Action, ACTIONS};
+use super::keys;
 use super::scene::{head_top, rel_seat};
 use super::{color32, UnoUi};
 use crate::net::{SeatKind, Session};
+use crate::profile::Profile;
 use crate::sfx::Sfx;
 use crate::steam::SteamApi;
 use crate::theme::{self, action_button, bold, hud_frame, rgb, semibold, with_alpha, SEAT_COLORS};
@@ -170,9 +173,16 @@ pub fn draw_hud(
     steam: Res<SteamApi>,
     mut next: ResMut<NextState<AppState>>,
     mut sfx: EventWriter<Sfx>,
+    mut profile: ResMut<Profile>,
     mut prev_acting: Local<Option<usize>>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?.clone();
+    // The keys belong to the table: a focused egui button must not also
+    // fire on Enter or Space.
+    if let Some(focused) = ctx.memory(|m| m.focused()) {
+        ctx.memory_mut(|m| m.surrender_focus(focused));
+    }
+    let binds = profile.data.uno_binds.clone();
     let Some(view) = session.uno_view() else {
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(&ctx, |ui| {
             ui.centered_and_justified(|ui| ui.label(RichText::new("Ожидаем данные от хоста…").font(semibold(20.0))));
@@ -326,6 +336,9 @@ pub fn draw_hud(
         .anchor(Align2::RIGHT_TOP, Vec2::new(-16.0, 16.0))
         .show(&ctx, |ui_| {
             ui_.horizontal(|ui_| {
+                if ui_.button("⚙").on_hover_text("Управление: клавиши и их назначение").clicked() {
+                    ui.show_settings = true;
+                }
                 if ui_.button("📊 Счёт").clicked() {
                     ui.show_scores = !ui.show_scores;
                 }
@@ -406,9 +419,7 @@ pub fn draw_hud(
 
     let can_draw = my_turn && view.phase == Phase::Turn;
     let can_pass = my_turn && matches!(view.phase, Phase::AfterDraw { .. });
-    let can_call = !my.uno_called
-        && ((my.hand.len() == 1 && view.uno_vulnerable == Some(me))
-            || (my.hand.len() == 2 && my_turn && matches!(view.phase, Phase::Turn | Phase::AfterDraw { .. })));
+    let can_call = keys::can_call_last(&view, me);
     let catch_target = view.uno_vulnerable.filter(|t| *t != me);
 
     egui::Area::new(egui::Id::new("uno-actions"))
@@ -425,33 +436,34 @@ pub fn draw_hud(
                     });
                 });
                 ui_.add_space(6.0);
-                if action_button(ui_, "Взять карту", theme::ACCENT, can_draw, 220.0).clicked() {
+                let hint = |action: Action| format!("  [{}]", binds.label(action));
+                if action_button(ui_, &format!("Взять карту{}", hint(Action::Draw)), theme::ACCENT, can_draw, 220.0).clicked() {
                     session.submit_uno(UnoAction::Draw);
                 }
-                if can_pass && action_button(ui_, "Оставить и пропустить", theme::PANEL_HI, true, 220.0).clicked() {
+                if can_pass
+                    && action_button(ui_, &format!("Оставить и пропустить{}", hint(Action::Pass)), theme::PANEL_HI, true, 220.0).clicked()
+                {
                     session.submit_uno(UnoAction::Pass);
                 }
                 let armed = ui.uno_armed && my.hand.len() == 2;
-                let label = if armed { "✔ «Последняя!» готово" } else { "«Последняя!»" };
-                let resp = action_button(ui_, label, if armed { theme::GOOD } else { theme::GOLD }, can_call, 220.0);
+                let label = if armed {
+                    "✔ «Последняя!» готово".to_string()
+                } else {
+                    format!("«Последняя!»{}", hint(Action::LastCard))
+                };
+                let resp = action_button(ui_, &label, if armed { theme::GOOD } else { theme::GOLD }, can_call, 220.0);
                 if resp.clicked() {
-                    if my.hand.len() == 2 && my_turn {
-                        // Announce with the next play (and register it right away).
-                        ui.uno_armed = true;
-                        session.submit_uno(UnoAction::CallUno);
-                    } else {
-                        session.submit_uno(UnoAction::CallUno);
-                    }
+                    keys::call_last(&mut session, &mut ui, &view, me);
                 }
                 if let Some(t) = catch_target {
-                    let text = format!("Поймать {}!", name(&view, t));
+                    let text = format!("Поймать {}!{}", name(&view, t), hint(Action::Catch));
                     if action_button(ui_, &text, theme::BAD, true, 220.0).clicked() {
                         session.submit_uno(UnoAction::CatchUno { target: t });
                     }
                 }
                 ui_.add_space(2.0);
                 ui_.label(
-                    RichText::new("Клик по карте — сыграть, по колоде — взять")
+                    RichText::new("Клик по карте — сыграть, по колоде — взять. ⚙ — клавиши")
                         .font(theme::regular(11.5))
                         .color(theme::TEXT_DIM),
                 );
@@ -482,6 +494,19 @@ pub fn draw_hud(
                             theme::regular(12.0),
                             Color32::from_white_alpha(220),
                         );
+                        let key_action = match c {
+                            CardColor::Red => Action::Red,
+                            CardColor::Yellow => Action::Yellow,
+                            CardColor::Green => Action::Green,
+                            CardColor::Blue => Action::Blue,
+                        };
+                        ui_.painter().text(
+                            r.center() + Vec2::new(0.0, 36.0),
+                            Align2::CENTER_CENTER,
+                            binds.label(key_action),
+                            theme::regular(12.0),
+                            Color32::from_white_alpha(170),
+                        );
                         if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                             session.submit_uno(UnoAction::ChooseColor(c));
                         }
@@ -505,10 +530,10 @@ pub fn draw_hud(
                 );
                 ui_.add_space(8.0);
                 ui_.horizontal(|ui_| {
-                    if action_button(ui_, "Оспорить", theme::BAD, true, 200.0).clicked() {
+                    if action_button(ui_, &format!("Оспорить [{}]", binds.label(Action::Challenge)), theme::BAD, true, 200.0).clicked() {
                         session.submit_uno(UnoAction::Challenge);
                     }
-                    if action_button(ui_, "Взять 4 карты", theme::PANEL_HI, true, 200.0).clicked() {
+                    if action_button(ui_, &format!("Взять 4 карты [{}]", binds.label(Action::Accept)), theme::PANEL_HI, true, 200.0).clicked() {
                         session.submit_uno(UnoAction::AcceptDrawFour);
                     }
                 });
@@ -555,7 +580,7 @@ pub fn draw_hud(
             ui_.horizontal(|ui_| match view.phase {
                 Phase::RoundOver { .. } => {
                     if session.is_host {
-                        if action_button(ui_, "Следующий раунд", theme::GOOD, true, 220.0).clicked() {
+                        if action_button(ui_, &format!("Следующий раунд [{}]", binds.label(Action::Confirm)), theme::GOOD, true, 220.0).clicked() {
                             if let Some(i) = session.my_index() {
                                 session.host_apply_uno(i, UnoAction::NextRound);
                             }
@@ -580,6 +605,54 @@ pub fn draw_hud(
                     if action_button(ui_, "Закрыть", theme::PANEL_HI, true, 140.0).clicked() {
                         ui.show_scores = false;
                     }
+                }
+            });
+        });
+    }
+
+    if ui.show_settings {
+        ui.modal_open = true;
+        modal(&ctx, "uno-settings", |ui_| {
+            ui_.set_width(460.0);
+            ui_.label(RichText::new("Управление").font(bold(24.0)));
+            ui_.label(
+                RichText::new("Клавиши привязаны к положению, как на латинской раскладке QWERTY.")
+                    .color(theme::TEXT_DIM),
+            );
+            ui_.add_space(8.0);
+            egui::Grid::new("uno-binds").num_columns(2).spacing([20.0, 5.0]).show(ui_, |ui_| {
+                for action in ACTIONS {
+                    ui_.label(action.label());
+                    let waiting = ui.capture == Some(action);
+                    let text = if waiting { "Нажмите клавишу…".to_string() } else { binds.label(action) };
+                    let color = if waiting { theme::GOLD } else { theme::TEXT };
+                    let key = egui::Button::new(RichText::new(text).font(semibold(14.0)).color(color))
+                        .min_size(Vec2::new(170.0, 28.0));
+                    if ui_.add(key).clicked() {
+                        ui.capture = Some(action);
+                    }
+                    ui_.end_row();
+                }
+            });
+            ui_.add_space(8.0);
+            ui_.label(
+                RichText::new(
+                    "Нажмите кнопку с клавишей, затем нужную клавишу. Esc — отмена. \
+                     Если клавиша уже занята, действия меняются местами.",
+                )
+                .font(theme::regular(12.0))
+                .color(theme::TEXT_DIM),
+            );
+            ui_.add_space(10.0);
+            ui_.horizontal(|ui_| {
+                if action_button(ui_, "По умолчанию", theme::PANEL_HI, true, 200.0).clicked() {
+                    profile.data.uno_binds.reset();
+                    profile.save();
+                    ui.capture = None;
+                }
+                if action_button(ui_, "Готово", theme::GOOD, true, 140.0).clicked() {
+                    ui.show_settings = false;
+                    ui.capture = None;
                 }
             });
         });
