@@ -710,6 +710,8 @@ pub fn animate_table(
         &mut Transform,
         (With<FigureHead>, Without<Figure>, Without<DeckStack>, Without<DirectionArrow>, Without<TurnMarker>),
     >,
+    // (angle, angular speed) of the direction arrows around the table.
+    mut spin: Local<(f32, f32)>,
 ) {
     let Some(view) = session.uno_view() else { return };
     let t = time.elapsed_secs();
@@ -740,12 +742,20 @@ pub fn animate_table(
         Direction::Clockwise => 1.0,
         Direction::CounterClockwise => -1.0,
     };
+    // The speed eases towards the new direction instead of jumping: deriving
+    // the angle from `t * sign` teleported every arrow to a new place (and
+    // flipped it) the instant the direction changed.
+    let dt = time.delta_secs();
+    let (angle, speed) = &mut *spin;
+    *speed += (0.6 * sign - *speed) * (dt * 4.0).min(1.0);
+    *angle = (*angle + *speed * dt).rem_euclid(TAU);
+    let facing = if *speed < 0.0 { -1.0 } else { 1.0 };
     // Visual order of seats runs counter-clockwise on screen; arrows follow play.
     for (arrow, mut tr) in &mut arrows {
-        let a = arrow.phase + t * 0.6 * sign;
+        let a = arrow.phase + *angle;
         let r = 1.55;
         let pos = Vec3::new(-a.sin() * r, 0.03, a.cos() * r) + Vec3::new(0.0, 0.0, -0.1);
-        let tangent = Vec3::new(-a.cos(), 0.0, -a.sin()) * sign;
+        let tangent = Vec3::new(-a.cos(), 0.0, -a.sin()) * facing;
         tr.translation = pos;
         tr.rotation = Quat::from_rotation_arc(Vec3::Y, tangent);
         tr.scale = Vec3::new(1.0, 1.0, 0.35);

@@ -130,7 +130,7 @@ fn process_events(view: &UnoGame, me: usize, ui: &mut UnoUi, sfx: &mut EventWrit
                 sfx.write(Sfx::Special);
             }
             UnoEvent::Reversed { .. } => {
-                ui.banner = Some(Banner { text: "⟲ Смена направления".into(), color: theme::ACCENT, age: 0.0 });
+                ui.banner = Some(Banner { text: "Смена направления".into(), color: theme::ACCENT, age: 0.0 });
                 sfx.write(Sfx::Special);
             }
             UnoEvent::UnoCalled { seat } => {
@@ -302,7 +302,9 @@ pub fn draw_hud(
     crate::theme::show_area(&ctx, egui::Area::new(egui::Id::new("uno-info"))
         .fixed_pos(Pos2::new(16.0, 16.0)), |ui_| {
             hud_frame().show(ui_, |ui_| {
-                ui_.set_min_width(230.0);
+                // Fixed width: the direction line differs in length, and a
+                // panel that resizes on every reversal makes the HUD jump.
+                ui_.set_width(250.0);
                 ui_.label(RichText::new("Уно").font(bold(20.0)));
                 let target = if view.target_score == 0 {
                     "одна партия".to_string()
@@ -318,8 +320,8 @@ pub fn draw_hud(
                     ui_.label(RichText::new(format!("Цвет: {}", view.active_color.name_ru())).font(semibold(15.0)));
                 });
                 let dir = match view.direction {
-                    uno_core::Direction::Clockwise => "⟳ по часовой",
-                    uno_core::Direction::CounterClockwise => "⟲ против часовой",
+                    uno_core::Direction::Clockwise => "по часовой",
+                    uno_core::Direction::CounterClockwise => "против часовой",
                 };
                 ui_.label(RichText::new(format!("Направление: {dir}")).color(theme::TEXT_DIM));
                 ui_.label(RichText::new(format!("В колоде: {}", view.draw_pile.len())).color(theme::TEXT_DIM));
