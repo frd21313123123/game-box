@@ -33,7 +33,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ env.IS_MAIN == 'true' }}
-      - run: cargo test -p uno-core -p monopoly-core -p netcode
+      - run: cargo test -p uno-core -p blackjack-core -p monopoly-core -p netcode
 
   # One job builds the exe and runs the launcher's tests in the same release
   # profile, so Bevy is compiled once. (A separate debug test job compiled it a

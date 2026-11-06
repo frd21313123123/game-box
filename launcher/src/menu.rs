@@ -1,4 +1,4 @@
-//! Main menu: profile, the two game cards, join dialog; plus global toasts.
+//! Main menu: profile, the game cards, join dialog; plus global toasts.
 
 use bevy::prelude::*;
 use bevy_egui::egui::{
@@ -122,13 +122,15 @@ fn menu_ui(
             });
 
             // Game cards.
-            let card_w = 430.0;
+            let games = [GameKind::Monopoly, GameKind::Uno, GameKind::Blackjack];
+            let count = games.len() as f32;
+            let gap = 32.0;
+            let card_w = ((full.width() - 64.0 - gap * (count - 1.0)) / count).clamp(300.0, 430.0);
             let card_h = 520.0;
-            let gap = 40.0;
-            let total = card_w * 2.0 + gap;
+            let total = card_w * count + gap * (count - 1.0);
             let top = full.top() + 150.0;
             let left = full.center().x - total / 2.0;
-            for (i, game) in [GameKind::Monopoly, GameKind::Uno].into_iter().enumerate() {
+            for (i, game) in games.into_iter().enumerate() {
                 let rect = Rect::from_min_size(Pos2::new(left + i as f32 * (card_w + gap), top), Vec2::new(card_w, card_h));
                 let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
                 game_card(&mut child, game, rect, &mut session, &profile, &mut menu, &mut next, &mut sfx);
@@ -282,6 +284,7 @@ fn game_card(
     match game {
         GameKind::Monopoly => paint_monopoly_art(&painter, art),
         GameKind::Uno => paint_cards_art(&painter, art, ui.input(|i| i.time) as f32),
+        GameKind::Blackjack => paint_blackjack_art(&painter, art, ui.input(|i| i.time) as f32),
     }
 
     let mut y = art.bottom() + 18.0;
@@ -295,6 +298,10 @@ fn game_card(
         GameKind::Uno => (
             "Сбрасывайте карты по цвету или значению,\nне забудьте крикнуть «Последняя!».",
             "2–8 игроков · 3D-стол",
+        ),
+        GameKind::Blackjack => (
+            "Наберите больше дилера, но не больше 21.\nСтавки, удвоение, сплит и страховка.",
+            "1–7 игроков против дилера · 3D-стол",
         ),
     };
     painter.text(Pos2::new(rect.left() + 24.0, y), Align2::LEFT_TOP, desc, theme::regular(15.0), theme::TEXT_DIM);
@@ -415,4 +422,71 @@ fn paint_card(painter: &egui::Painter, center: Pos2, size: Vec2, angle: f32, col
     painter.add(Shape::Text(
         TextShape::new(center - rot * half, galley, color).with_angle(angle),
     ));
+}
+
+/// Two playing cards making 21 next to a few chip stacks.
+fn paint_blackjack_art(painter: &egui::Painter, rect: Rect, time: f32) {
+    let painter = &painter.with_clip_rect(rect);
+    painter.rect_filled(rect, 16, Color32::from_rgb(10, 66, 60));
+    // The printed arc of a blackjack table.
+    let arc_center = Pos2::new(rect.center().x, rect.top() - 120.0);
+    painter.add(Shape::circle_stroke(arc_center, 290.0, theme::stroke(2.0, Color32::from_rgba_unmultiplied(240, 200, 90, 120))));
+    painter.text(
+        Pos2::new(rect.center().x, rect.top() + 22.0),
+        Align2::CENTER_CENTER,
+        "БЛЭКДЖЕК ПЛАТИТ 3 К 2",
+        semibold(13.0),
+        Color32::from_rgba_unmultiplied(240, 200, 90, 170),
+    );
+    let sway = (time * 0.8).sin() * 0.02;
+    let base = Pos2::new(rect.center().x - 40.0, rect.center().y + 20.0);
+    for (i, (label, suit, red)) in [("A", "♠", false), ("K", "♥", true)].into_iter().enumerate() {
+        let angle = -0.18 + i as f32 * 0.32 + sway;
+        let center = base + Vec2::new(i as f32 * 62.0, -(i as f32) * 6.0);
+        paint_playing_card(painter, center, Vec2::new(96.0, 140.0), angle, label, suit, red);
+    }
+    // Chip stacks.
+    let chips = [[0x7B, 0x3F, 0xC4], [0x22, 0x23, 0x2A], [0xC8, 0x2A, 0x2A], [0x1F, 0x6F, 0xD6]];
+    for (k, c) in chips.iter().enumerate() {
+        let x = rect.right() - 150.0 + (k % 2) as f32 * 52.0;
+        let y = rect.bottom() - 40.0 - (k / 2) as f32 * 64.0;
+        for h in 0..(4 + k) {
+            let p = Pos2::new(x, y - h as f32 * 6.0);
+            painter.add(Shape::ellipse_filled(p + Vec2::new(0.0, 3.0), Vec2::new(22.0, 9.0), theme::darken(rgb(*c), 0.6)));
+            painter.add(Shape::ellipse_filled(p, Vec2::new(22.0, 9.0), rgb(*c)));
+            painter.add(Shape::ellipse_stroke(p, Vec2::new(16.0, 6.0), theme::stroke(1.5, Color32::from_white_alpha(170))));
+        }
+    }
+    painter.text(
+        Pos2::new(rect.left() + 70.0, rect.bottom() - 40.0),
+        Align2::CENTER_CENTER,
+        "21",
+        bold(54.0),
+        Color32::from_rgba_unmultiplied(255, 214, 64, 220),
+    );
+}
+
+fn paint_playing_card(painter: &egui::Painter, center: Pos2, size: Vec2, angle: f32, label: &str, suit: &str, red: bool) {
+    let rot = Rot2::from_angle(angle);
+    let corners = |s: Vec2| -> Vec<Pos2> {
+        [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+            .iter()
+            .map(|(x, y)| center + rot * Vec2::new(x * s.x / 2.0, y * s.y / 2.0))
+            .collect()
+    };
+    painter.add(Shape::convex_polygon(
+        corners(size + Vec2::splat(4.0)).iter().map(|p| *p + Vec2::new(3.0, 5.0)).collect(),
+        Color32::from_black_alpha(80),
+        Stroke::NONE,
+    ));
+    painter.add(Shape::convex_polygon(corners(size), Color32::from_rgb(253, 251, 246), theme::stroke(1.0, Color32::from_rgb(200, 194, 180))));
+    let ink = if red { Color32::from_rgb(196, 30, 42) } else { Color32::from_rgb(27, 28, 36) };
+    let text = |s: &str, offset: Vec2, size: f32| {
+        let galley = painter.layout_no_wrap(s.into(), bold(size), ink);
+        let half = galley.size() / 2.0;
+        painter.add(Shape::Text(TextShape::new(center + rot * (offset - half), galley, ink).with_angle(angle)));
+    };
+    text(label, Vec2::new(-size.x / 2.0 + 16.0, -size.y / 2.0 + 18.0), 22.0);
+    text(suit, Vec2::new(-size.x / 2.0 + 16.0, -size.y / 2.0 + 40.0), 16.0);
+    text(suit, Vec2::ZERO, 52.0);
 }

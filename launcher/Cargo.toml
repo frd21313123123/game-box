@@ -1,6 +1,6 @@
 [package]
 name = "game-box"
-description = "Игровой лаунчер: Монополия и Уно"
+description = "Игровой лаунчер: Монополия, Уно и Блэкджек"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
@@ -16,6 +16,7 @@ steam = ["dep:steamworks"]
 
 [dependencies]
 uno-core = { path = "../crates/uno-core" }
+blackjack-core = { path = "../crates/blackjack-core" }
 monopoly-core = { path = "../crates/monopoly-core" }
 netcode = { path = "../crates/netcode" }
 serde.workspace = true

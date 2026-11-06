@@ -7,6 +7,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::steam::SteamApi;
+use crate::blackjack::binds::BjBinds;
 use crate::uno::binds::UnoBinds;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -18,6 +19,9 @@ pub struct ProfileData {
     /// Keyboard controls of the card game (only overrides are stored).
     #[serde(default)]
     pub uno_binds: UnoBinds,
+    /// Keyboard controls of Blackjack (only overrides are stored).
+    #[serde(default)]
+    pub bj_binds: BjBinds,
 }
 
 impl Default for ProfileData {
@@ -33,6 +37,7 @@ impl Default for ProfileData {
             volume: 0.7,
             last_address: String::new(),
             uno_binds: UnoBinds::default(),
+            bj_binds: BjBinds::default(),
         }
     }
 }

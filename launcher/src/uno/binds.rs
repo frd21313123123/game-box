@@ -1,11 +1,12 @@
-//! Keyboard bindings of the card table. Only the keys that differ from the
-//! defaults are stored in the profile, so an untouched profile keeps working
-//! when new actions are added later.
-
-use std::collections::BTreeMap;
+//! Keyboard actions of the Uno table (the keys themselves are handled by
+//! [`crate::binds`]).
 
 use bevy::prelude::*;
-use serde::{Deserialize, Serialize};
+
+use crate::binds::{BindAction, Binds};
+
+/// The player's Uno bindings, stored in the profile.
+pub type UnoBinds = Binds<Action>;
 
 /// Everything that can be done from the keyboard at the card table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -48,9 +49,10 @@ pub const ACTIONS: [Action; 16] = [
     Action::Accept,
 ];
 
-impl Action {
-    /// Stable key used in the profile file.
-    pub fn id(self) -> &'static str {
+impl BindAction for Action {
+    const ALL: &'static [Action] = &ACTIONS;
+
+    fn id(self) -> &'static str {
         match self {
             Action::Left => "left",
             Action::Right => "right",
@@ -71,8 +73,7 @@ impl Action {
         }
     }
 
-    /// Name shown in the settings dialog.
-    pub fn label(self) -> &'static str {
+    fn label(self) -> &'static str {
         match self {
             Action::Left => "Выбрать карту левее",
             Action::Right => "Выбрать карту правее",
@@ -93,7 +94,7 @@ impl Action {
         }
     }
 
-    pub fn default_key(self) -> KeyCode {
+    fn default_key(self) -> KeyCode {
         match self {
             Action::Left => KeyCode::ArrowLeft,
             Action::Right => KeyCode::ArrowRight,
@@ -115,131 +116,10 @@ impl Action {
     }
 }
 
-/// Keys that can be bound, with the names they are stored under.
-const KEYS: &[(&str, KeyCode)] = &[
-    ("A", KeyCode::KeyA),
-    ("B", KeyCode::KeyB),
-    ("C", KeyCode::KeyC),
-    ("D", KeyCode::KeyD),
-    ("E", KeyCode::KeyE),
-    ("F", KeyCode::KeyF),
-    ("G", KeyCode::KeyG),
-    ("H", KeyCode::KeyH),
-    ("I", KeyCode::KeyI),
-    ("J", KeyCode::KeyJ),
-    ("K", KeyCode::KeyK),
-    ("L", KeyCode::KeyL),
-    ("M", KeyCode::KeyM),
-    ("N", KeyCode::KeyN),
-    ("O", KeyCode::KeyO),
-    ("P", KeyCode::KeyP),
-    ("Q", KeyCode::KeyQ),
-    ("R", KeyCode::KeyR),
-    ("S", KeyCode::KeyS),
-    ("T", KeyCode::KeyT),
-    ("U", KeyCode::KeyU),
-    ("V", KeyCode::KeyV),
-    ("W", KeyCode::KeyW),
-    ("X", KeyCode::KeyX),
-    ("Y", KeyCode::KeyY),
-    ("Z", KeyCode::KeyZ),
-    ("0", KeyCode::Digit0),
-    ("1", KeyCode::Digit1),
-    ("2", KeyCode::Digit2),
-    ("3", KeyCode::Digit3),
-    ("4", KeyCode::Digit4),
-    ("5", KeyCode::Digit5),
-    ("6", KeyCode::Digit6),
-    ("7", KeyCode::Digit7),
-    ("8", KeyCode::Digit8),
-    ("9", KeyCode::Digit9),
-    ("Space", KeyCode::Space),
-    ("Enter", KeyCode::Enter),
-    ("Tab", KeyCode::Tab),
-    ("Backspace", KeyCode::Backspace),
-    ("Left", KeyCode::ArrowLeft),
-    ("Right", KeyCode::ArrowRight),
-    ("Up", KeyCode::ArrowUp),
-    ("Down", KeyCode::ArrowDown),
-    ("Esc", KeyCode::Escape),
-];
-
-fn key_name(code: KeyCode) -> Option<&'static str> {
-    KEYS.iter().find(|(_, k)| *k == code).map(|(name, _)| *name)
-}
-
-fn key_from_name(name: &str) -> Option<KeyCode> {
-    KEYS.iter().find(|(n, _)| *n == name).map(|(_, k)| *k)
-}
-
-/// Whether a key can be used as a binding (the settings dialog rejects others).
-pub fn is_bindable(code: KeyCode) -> bool {
-    key_name(code).is_some()
-}
-
-/// Short text for a key, as shown on buttons and hints.
-pub fn key_label(code: KeyCode) -> String {
-    match code {
-        KeyCode::Space => "Пробел".into(),
-        KeyCode::ArrowLeft => "←".into(),
-        KeyCode::ArrowRight => "→".into(),
-        KeyCode::ArrowUp => "↑".into(),
-        KeyCode::ArrowDown => "↓".into(),
-        KeyCode::Escape => "Esc".into(),
-        other => key_name(other).map(str::to_string).unwrap_or_else(|| format!("{other:?}")),
-    }
-}
-
-/// Player's bindings. Stores only the overrides from the defaults.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct UnoBinds(BTreeMap<String, String>);
-
-impl UnoBinds {
-    /// The key currently bound to `action`.
-    pub fn key(&self, action: Action) -> KeyCode {
-        self.0
-            .get(action.id())
-            .and_then(|name| key_from_name(name))
-            .unwrap_or_else(|| action.default_key())
-    }
-
-    /// Whether the action was pressed this frame.
-    pub fn pressed(&self, keys: &ButtonInput<KeyCode>, action: Action) -> bool {
-        keys.just_pressed(self.key(action))
-    }
-
-    pub fn label(&self, action: Action) -> String {
-        key_label(self.key(action))
-    }
-
-    /// Binds `action` to `key`. If another action already uses that key, the
-    /// two actions swap keys, so no key ever triggers two actions.
-    pub fn set(&mut self, action: Action, key: KeyCode) {
-        let old = self.key(action);
-        if let Some(other) = ACTIONS.into_iter().find(|o| *o != action && self.key(*o) == key) {
-            self.assign(other, old);
-        }
-        self.assign(action, key);
-    }
-
-    /// Back to the default keys.
-    pub fn reset(&mut self) {
-        self.0.clear();
-    }
-
-    fn assign(&mut self, action: Action, key: KeyCode) {
-        if key == action.default_key() {
-            self.0.remove(action.id());
-        } else if let Some(name) = key_name(key) {
-            self.0.insert(action.id().to_string(), name.to_string());
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::binds::is_bindable;
 
     #[test]
     fn default_keys_are_unique_and_bindable() {
@@ -250,14 +130,6 @@ mod tests {
                     assert_ne!(a.default_key(), b.default_key(), "{:?} and {:?} clash", a, b);
                 }
             }
-        }
-    }
-
-    #[test]
-    fn key_names_round_trip() {
-        for (name, code) in KEYS {
-            assert_eq!(key_from_name(name), Some(*code));
-            assert_eq!(key_name(*code), Some(*name));
         }
     }
 
@@ -276,6 +148,7 @@ mod tests {
         let mut b = UnoBinds::default();
         b.set(Action::Catch, KeyCode::KeyJ);
         let json = serde_json::to_string(&b).unwrap();
+        assert_eq!(json, r#"{"catch":"J"}"#);
         let back: UnoBinds = serde_json::from_str(&json).unwrap();
         assert_eq!(back, b);
         assert_eq!(back.key(Action::Catch), KeyCode::KeyJ);

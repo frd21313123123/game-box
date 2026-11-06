@@ -1,8 +1,8 @@
 //! «Уно» — a shedding card game in the classic four-colour style,
 //! played at a 3D table.
 
+pub(crate) mod art;
 pub mod binds;
-mod art;
 mod hud;
 mod keys;
 mod scene;
@@ -99,7 +99,7 @@ impl Plugin for UnoPlugin {
                     scene::hand_input,
                     scene::sync_table,
                     scene::layout_cards,
-                    scene::animate_cards,
+                    crate::table3d::animate_motion,
                     scene::fade_old_cards,
                     scene::animate_table,
                 )

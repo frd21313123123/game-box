@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/uno-core", "crates/monopoly-core", "crates/netcode", "launcher"]
+members = ["crates/uno-core", "crates/blackjack-core", "crates/monopoly-core", "crates/netcode", "launcher"]
 
 [workspace.package]
 edition = "2021"

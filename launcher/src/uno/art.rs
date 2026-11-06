@@ -17,10 +17,10 @@ use uno_core::{Card, CardColor, Face};
 
 pub const TEX_W: u32 = 256;
 pub const TEX_H: u32 = 384;
-const RADIUS: f32 = 26.0;
-const BORDER: f32 = 11.0;
+pub(crate) const RADIUS: f32 = 26.0;
+pub(crate) const BORDER: f32 = 11.0;
 
-const FONT: &[u8] = include_bytes!("../../../assets/fonts/Inter-ExtraBold.otf");
+pub(crate) const FONT: &[u8] = include_bytes!("../../../assets/fonts/Inter-ExtraBold.otf");
 
 /// Index of a face texture: 0..52 coloured cards, 52 wild, 53 wild draw four.
 pub fn face_index(card: &Card) -> usize {
@@ -37,18 +37,18 @@ pub fn face_index(card: &Card) -> usize {
 
 pub const FACE_COUNT: usize = 54;
 
-fn sk(c: [u8; 3], a: u8) -> SkColor {
+pub(crate) fn sk(c: [u8; 3], a: u8) -> SkColor {
     SkColor::from_rgba8(c[0], c[1], c[2], a)
 }
 
-fn paint(color: SkColor) -> Paint<'static> {
+pub(crate) fn paint(color: SkColor) -> Paint<'static> {
     let mut p = Paint::default();
     p.set_color(color);
     p.anti_alias = true;
     p
 }
 
-fn rounded_rect(x: f32, y: f32, w: f32, h: f32, r: f32) -> Path {
+pub(crate) fn rounded_rect(x: f32, y: f32, w: f32, h: f32, r: f32) -> Path {
     let k = 0.552_284_8 * r;
     let mut pb = PathBuilder::new();
     pb.move_to(x + r, y);
@@ -64,26 +64,26 @@ fn rounded_rect(x: f32, y: f32, w: f32, h: f32, r: f32) -> Path {
     pb.finish().expect("valid rounded rect")
 }
 
-fn circle(cx: f32, cy: f32, r: f32) -> Path {
+pub(crate) fn circle(cx: f32, cy: f32, r: f32) -> Path {
     PathBuilder::from_circle(cx, cy, r).expect("valid circle")
 }
 
-struct Painter<'a> {
-    pm: Pixmap,
+pub(crate) struct Painter<'a> {
+    pub(crate) pm: Pixmap,
     font: FontRef<'a>,
 }
 
 impl Painter<'_> {
-    fn fill(&mut self, path: &Path, color: SkColor) {
+    pub(crate) fn fill(&mut self, path: &Path, color: SkColor) {
         self.pm
             .fill_path(path, &paint(color), FillRule::Winding, Transform::identity(), None);
     }
 
-    fn fill_t(&mut self, path: &Path, color: SkColor, t: Transform) {
+    pub(crate) fn fill_t(&mut self, path: &Path, color: SkColor, t: Transform) {
         self.pm.fill_path(path, &paint(color), FillRule::Winding, t, None);
     }
 
-    fn fill_shader(&mut self, path: &Path, shader: Shader<'static>) {
+    pub(crate) fn fill_shader(&mut self, path: &Path, shader: Shader<'static>) {
         let mut p = Paint::default();
         p.shader = shader;
         p.anti_alias = true;
@@ -91,7 +91,7 @@ impl Painter<'_> {
             .fill_path(path, &p, FillRule::Winding, Transform::identity(), None);
     }
 
-    fn stroke(&mut self, path: &Path, color: SkColor, width: f32, t: Transform) {
+    pub(crate) fn stroke(&mut self, path: &Path, color: SkColor, width: f32, t: Transform) {
         let stroke = Stroke {
             width,
             line_cap: LineCap::Round,
@@ -101,7 +101,7 @@ impl Painter<'_> {
     }
 
     /// Draws `text` centred at (cx, cy) with an optional rotation (radians).
-    fn text(&mut self, text: &str, cx: f32, cy: f32, size: f32, color: [u8; 4], rotate: f32) {
+    pub(crate) fn text(&mut self, text: &str, cx: f32, cy: f32, size: f32, color: [u8; 4], rotate: f32) {
         let scaled = self.font.as_scaled(PxScale::from(size));
         // Measure.
         let mut width = 0.0;
@@ -167,22 +167,22 @@ impl Painter<'_> {
     }
 }
 
-fn mask_from(path: &Path) -> Option<tiny_skia::Mask> {
+pub(crate) fn mask_from(path: &Path) -> Option<tiny_skia::Mask> {
     let mut mask = tiny_skia::Mask::new(TEX_W, TEX_H)?;
     mask.fill_path(path, FillRule::Winding, true, Transform::identity());
     Some(mask)
 }
 
-fn new_painter() -> Painter<'static> {
+pub(crate) fn new_painter() -> Painter<'static> {
     Painter {
         pm: Pixmap::new(TEX_W, TEX_H).expect("valid size"),
         font: FontRef::try_from_slice(FONT).expect("bundled font parses"),
     }
 }
 
-const CREAM: [u8; 3] = [0xFB, 0xF7, 0xEE];
+pub(crate) const CREAM: [u8; 3] = [0xFB, 0xF7, 0xEE];
 
-fn card_body(p: &mut Painter, field_top: [u8; 3], field_bottom: [u8; 3]) {
+pub(crate) fn card_body(p: &mut Painter, field_top: [u8; 3], field_bottom: [u8; 3]) {
     let (w, h) = (TEX_W as f32, TEX_H as f32);
     p.fill(&rounded_rect(0.0, 0.0, w, h, RADIUS), sk(CREAM, 255));
     let inner = rounded_rect(BORDER, BORDER, w - 2.0 * BORDER, h - 2.0 * BORDER, RADIUS - BORDER + 4.0);
@@ -215,7 +215,7 @@ fn card_body(p: &mut Painter, field_top: [u8; 3], field_bottom: [u8; 3]) {
     }
 }
 
-fn shade(c: [u8; 3], k: f32) -> [u8; 3] {
+pub(crate) fn shade(c: [u8; 3], k: f32) -> [u8; 3] {
     [
         (c[0] as f32 * k).min(255.0) as u8,
         (c[1] as f32 * k).min(255.0) as u8,
@@ -405,7 +405,7 @@ fn paint_back() -> Pixmap {
 }
 
 /// Builds a texture with a full mip chain from a premultiplied pixmap.
-fn to_image(pm: &Pixmap) -> Image {
+pub(crate) fn to_image(pm: &Pixmap) -> Image {
     let (mut w, mut h) = (pm.width() as usize, pm.height() as usize);
     // Work in premultiplied f32 so averaging doesn't create dark fringes.
     let mut level: Vec<[f32; 4]> = pm

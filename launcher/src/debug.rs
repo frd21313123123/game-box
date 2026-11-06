@@ -1,5 +1,5 @@
 //! Developer helpers driven by environment variables:
-//! `GAMEBOX_AUTOSTART=uno|monopoly` starts a local game with bots right away;
+//! `GAMEBOX_AUTOSTART=uno|monopoly|blackjack` starts a local game with bots right away;
 //! `GAMEBOX_SCREENSHOT=path.png` (with `GAMEBOX_SCREENSHOT_AFTER=seconds`)
 //! saves a screenshot and quits.
 
@@ -39,8 +39,13 @@ fn autostart(
     let kind = match game.as_str() {
         "uno" => GameKind::Uno,
         "monopoly" => GameKind::Monopoly,
-        "lobby-uno" | "lobby-monopoly" => {
-            let kind = if game.ends_with("uno") { GameKind::Uno } else { GameKind::Monopoly };
+        "blackjack" => GameKind::Blackjack,
+        "lobby-uno" | "lobby-monopoly" | "lobby-blackjack" => {
+            let kind = match game.as_str() {
+                "lobby-uno" => GameKind::Uno,
+                "lobby-blackjack" => GameKind::Blackjack,
+                _ => GameKind::Monopoly,
+            };
             session.host(kind, &profile);
             if std::env::var_os("GAMEBOX_OPEN_TCP").is_some() {
                 if let Err(e) = session.open_tcp() {

@@ -248,3 +248,16 @@ pub const SEAT_COLORS: [[u8; 3]; 8] = [
 pub fn stroke(width: f32, color: Color32) -> Stroke {
     Stroke::new(width, color)
 }
+
+/// A centred dialog over a dimmed screen.
+pub fn modal(ctx: &egui::Context, id: &str, add: impl FnOnce(&mut Ui)) {
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::new(("dim", id))));
+    painter.rect_filled(ctx.screen_rect(), 0, Color32::from_black_alpha(90));
+    egui::Window::new(id)
+        .title_bar(false)
+        .resizable(false)
+        .collapsible(false)
+        .anchor(Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .frame(card_frame().inner_margin(Margin::same(22)))
+        .show(ctx, add);
+}
