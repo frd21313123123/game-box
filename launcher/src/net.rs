@@ -177,10 +177,6 @@ impl Session {
         self.seat_index(self.my_seat)
     }
 
-    pub fn seat(&self, seat_id: u32) -> Option<&Seat> {
-        self.lobby.seats.iter().find(|s| s.id == seat_id)
-    }
-
     fn new_seat(&mut self, name: String, kind: SeatKind) -> Option<u32> {
         if self.lobby.seats.len() >= MAX_SEATS {
             return None;

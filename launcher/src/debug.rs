@@ -14,7 +14,7 @@ pub struct DebugPlugin;
 
 impl Plugin for DebugPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (autostart, screenshot));
+        app.add_systems(Update, (autostart, screenshot, delayed_start));
     }
 }
 
@@ -28,6 +28,13 @@ fn autostart(
         return;
     }
     *done = true;
+    if let Ok(addr) = std::env::var("GAMEBOX_JOIN") {
+        match session.join_tcp(&addr, GameKind::Uno, &profile) {
+            Ok(()) => next.set(AppState::Lobby),
+            Err(e) => error!("join failed: {e}"),
+        }
+        return;
+    }
     let Ok(game) = std::env::var("GAMEBOX_AUTOSTART") else { return };
     let kind = match game.as_str() {
         "uno" => GameKind::Uno,
@@ -35,6 +42,11 @@ fn autostart(
         "lobby-uno" | "lobby-monopoly" => {
             let kind = if game.ends_with("uno") { GameKind::Uno } else { GameKind::Monopoly };
             session.host(kind, &profile);
+            if std::env::var_os("GAMEBOX_OPEN_TCP").is_some() {
+                if let Err(e) = session.open_tcp() {
+                    error!("open failed: {e}");
+                }
+            }
             next.set(AppState::Lobby);
             return;
         }
@@ -68,5 +80,21 @@ fn screenshot(mut commands: Commands, time: Res<Time>, mut state: Local<u8>, mut
     } else if *state == 1 && t > after + 1.5 {
         exit.write(AppExit::Success);
         *state = 2;
+    }
+}
+
+/// `GAMEBOX_START_AFTER=seconds`: the host starts the lobby's game after a delay.
+fn delayed_start(time: Res<Time>, mut session: ResMut<Session>, mut done: Local<bool>) {
+    if *done {
+        return;
+    }
+    let Some(after) = std::env::var("GAMEBOX_START_AFTER").ok().and_then(|s| s.parse::<f32>().ok()) else {
+        return;
+    };
+    if time.elapsed_secs() > after && session.is_host && !session.lobby.started {
+        *done = true;
+        if let Err(e) = session.start_game() {
+            error!("start failed: {e}");
+        }
     }
 }

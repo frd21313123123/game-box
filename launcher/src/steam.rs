@@ -12,6 +12,7 @@ use bevy::prelude::*;
 use netcode::Transport;
 
 #[derive(Debug, Clone)]
+#[cfg_attr(not(feature = "steam"), allow(dead_code))]
 pub enum SteamEvent {
     LobbyCreated(Result<u64, String>),
     /// Joined a lobby: (lobby id, owner's Steam id).

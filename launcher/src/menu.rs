@@ -113,7 +113,11 @@ fn menu_ui(
                         profile.data.sound = !profile.data.sound;
                         profile.save();
                     }
-                    profile_chip(ui, &mut profile, &mut menu, steam.available());
+                    ui.allocate_ui_with_layout(
+                        Vec2::new(260.0, 48.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| profile_chip(ui, &mut profile, &mut menu, steam.available()),
+                    );
                 });
             });
 
