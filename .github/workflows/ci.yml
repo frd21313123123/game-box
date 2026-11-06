@@ -1,12 +1,13 @@
 name: CI
 
-# Every push to main/master builds the Windows exe and publishes it as a
+# Every push to the main branch builds the Windows exe and publishes it as a
 # pre-release "build-<run number>" on the Releases page. Pull requests only
 # build and test; they publish nothing.
 on:
   pull_request:
   push:
-    branches: [main, master]
+    # claude/rust-game-launcher-px1e6e is this repository's main branch.
+    branches: [main, master, claude/rust-game-launcher-px1e6e]
   workflow_dispatch:
 
 # Only a newer push to a pull request cancels an older run. Builds on main are
@@ -65,9 +66,8 @@ jobs:
   publish-build:
     name: Publish build release
     needs: [core, test-windows, build-windows]
-    if: >-
-      (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'))
-      || github.event_name == 'workflow_dispatch'
+    # Any push that triggers this workflow is a push to the main branch (see `on`).
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: write
