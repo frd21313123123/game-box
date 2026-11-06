@@ -47,7 +47,9 @@ pub fn play_card(session: &mut Session, ui: &mut UnoUi, view: &UnoGame, me: usiz
         }
         return;
     }
-    let call_uno = ui.uno_armed && view.players[me].hand.len() == 2;
+    // Trust the flag only while it still matches the table: the server clears
+    // the call when cards are drawn, so a stale local flag must not resurrect it.
+    let call_uno = ui.uno_armed && view.players[me].hand.len() == 2 && view.players[me].uno_called;
     ui.uno_armed = false;
     session.submit_uno(UnoAction::Play { card_id: id, call_uno });
 }

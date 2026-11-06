@@ -210,6 +210,29 @@ mod tests {
     }
 
     #[test]
+    fn old_uno_call_does_not_cover_a_hand_that_grew_back() {
+        let red = Some(CardColor::Red);
+        let mut g = rigged(
+            vec![
+                vec![card(1, Some(CardColor::Blue), Face::Number(5))],
+                vec![card(3, red, Face::Number(2)), card(5, red, Face::Number(2))],
+            ],
+            card(0, red, Face::Number(9)),
+            CardColor::Red,
+        );
+        // Player 0 called «last card!» with one card, then has to draw.
+        g.players[0].uno_called = true;
+        g.draw_pile.push(card(600, red, Face::Number(3)));
+        g.apply(0, UnoAction::Draw).unwrap();
+        assert!(!g.players[0].uno_called);
+        g.apply(0, UnoAction::Play { card_id: 600, call_uno: false }).unwrap();
+        // Back to one card without a fresh call: can be caught.
+        assert_eq!(g.uno_vulnerable, Some(0));
+        g.apply(1, UnoAction::CatchUno { target: 0 }).unwrap();
+        assert_eq!(g.players[0].hand.len(), 3);
+    }
+
+    #[test]
     fn next_player_acting_ends_catch_window() {
         let red = Some(CardColor::Red);
         let mut g = rigged(
