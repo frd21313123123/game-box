@@ -13,6 +13,7 @@ mod sfx;
 mod steam;
 mod theme;
 mod uno;
+mod update;
 
 use bevy::prelude::*;
 use bevy::window::WindowResolution;
@@ -63,6 +64,7 @@ fn main() {
             uno::UnoPlugin,
             monopoly::MonopolyPlugin,
             debug::DebugPlugin,
+            update::UpdatePlugin,
         ))
         .add_systems(Startup, spawn_camera)
         .add_systems(EguiPrimaryContextPass, install_theme)
