@@ -317,3 +317,73 @@ pub fn banner(ctx: &egui::Context, id: &str, pos: Pos2, text: &str, size: f32, c
     );
     painter.text(pos, Align2::CENTER_CENTER, text, font, with_alpha(color, (255.0 * alpha) as u8));
 }
+
+/// Fonts whose glyphs [`prewarm_glyphs`] puts into the atlas up front, most
+/// important first: the captions that pop up in the middle of a game (the
+/// centre banners of Uno and Blackjack, the speech bubbles), then the in-game
+/// HUD text (event feed, name plates, status line, buttons).
+fn prewarm_fonts() -> [FontId; 20] {
+    [
+        bold(44.0),
+        bold(42.0),
+        bold(18.0),
+        regular(15.0),
+        regular(12.0),
+        regular(11.0),
+        regular(11.5),
+        semibold(13.0),
+        semibold(13.5),
+        semibold(14.0),
+        semibold(15.0),
+        semibold(16.0),
+        semibold(17.0),
+        semibold(20.0),
+        bold(17.0),
+        bold(20.0),
+        bold(22.0),
+        bold(24.0),
+        bold(26.0),
+        bold(28.0),
+    ]
+}
+
+/// Characters the game texts use: Latin, Cyrillic, digits, punctuation.
+fn prewarm_chars() -> impl Iterator<Item = char> {
+    (' '..='~').chain('А'..='я').chain(['Ё', 'ё', '«', '»', '…', '—', '–', '·', '№', '−'])
+}
+
+/// egui rebuilds its whole font atlas once it is 80% full, which would undo the
+/// warm-up (and redo it every frame); stop well before that.
+const PREWARM_MAX_FILL: f32 = 0.5;
+
+/// Rasterises the glyphs of the in-game texts into egui's font atlas ahead of
+/// time.
+///
+/// egui adds a glyph to its font atlas the first time a letter is drawn at a
+/// given size, and bevy_egui answers every change of the atlas by building and
+/// uploading the whole atlas as a brand-new texture. The big captions
+/// «Смена направления» and «Вы пропускаете ход» (and the «Пропуск!» bubble,
+/// the event feed line) use letters at sizes nothing else on screen had used
+/// yet, so that texture swap landed exactly on a reverse / skip and the screen
+/// blinked. With the glyphs already in the atlas, nothing is uploaded then.
+///
+/// Call it every frame with the same `warmed_fill`: it does the work only on
+/// the first call and whenever egui has recreated the atlas from scratch since
+/// (the scale factor changed: another monitor, OS zoom), which it notices by
+/// the atlas being emptier than it was right after the last warm-up.
+pub fn prewarm_glyphs(ctx: &egui::Context, warmed_fill: &mut Option<f32>) {
+    ctx.fonts(|fonts| {
+        if warmed_fill.is_some_and(|w| fonts.font_atlas_fill_ratio() >= w) {
+            return;
+        }
+        for font in prewarm_fonts() {
+            if fonts.font_atlas_fill_ratio() > PREWARM_MAX_FILL {
+                break;
+            }
+            for c in prewarm_chars() {
+                fonts.glyph_width(&font, c);
+            }
+        }
+        *warmed_fill = Some(fonts.font_atlas_fill_ratio());
+    });
+}

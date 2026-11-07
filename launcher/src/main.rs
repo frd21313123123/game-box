@@ -101,7 +101,12 @@ fn spawn_camera(mut commands: Commands) {
 pub struct ThemeReady;
 
 /// Fonts and visuals are installed once, on the first egui frame.
-fn install_theme(mut commands: Commands, mut contexts: EguiContexts, mut step: Local<u8>) -> Result {
+fn install_theme(
+    mut commands: Commands,
+    mut contexts: EguiContexts,
+    mut step: Local<u8>,
+    mut warmed_fill: Local<Option<f32>>,
+) -> Result {
     match *step {
         0 => {
             theme::install(contexts.ctx_mut()?);
@@ -112,6 +117,9 @@ fn install_theme(mut commands: Commands, mut contexts: EguiContexts, mut step: L
             *step = 2;
         }
         _ => {}
+    }
+    if *step > 1 {
+        theme::prewarm_glyphs(contexts.ctx_mut()?, &mut warmed_fill);
     }
     Ok(())
 }
