@@ -1,7 +1,10 @@
 name: CI
 
-# Every build, from every branch, builds the Windows exe and publishes it as a
-# pre-release "build-<run number>" on the Releases page. A push to a branch
+# Every build, from every branch, builds the Windows exe and publishes it on
+# the Releases page as v<major>.<minor>.<run number> (major.minor from
+# Cargo.toml). Builds of the default branch are full releases marked Latest,
+# which is what the launcher's auto-updater installs; builds of other branches
+# are pre-releases, so unmerged code never reaches players. A push to a branch
 # with an open pull request already builds that code, so pull requests are not
 # built a second time.
 on:
@@ -39,15 +42,29 @@ jobs:
   build-windows:
     name: Build & test (Windows)
     runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     env:
       # LLVM's linker ships with rustup and links Bevy far faster than link.exe.
       CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER: rust-lld.exe
     steps:
       - uses: actions/checkout@v4
+      # The build number becomes the patch version. It is baked into the exe
+      # (GAMEBOX_VERSION, read by launcher/src/update.rs) and names the release.
+      - name: Version
+        id: version
+        shell: pwsh
+        run: |
+          $m = Select-String -Path Cargo.toml -Pattern '^version = "(\d+)\.(\d+)\.' | Select-Object -First 1
+          if (-not $m) { throw 'version not found in Cargo.toml' }
+          $v = '{0}.{1}.{2}' -f $m.Matches[0].Groups[1].Value, $m.Matches[0].Groups[2].Value, $env:GITHUB_RUN_NUMBER
+          "GAMEBOX_VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "Version: $v"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          # Shared with the Release workflow: same toolchain, profile and features.
+          # Only main-branch runs save it; every other run restores it.
           shared-key: windows-release
           save-if: ${{ env.IS_MAIN == 'true' }}
       - name: Build release
@@ -63,24 +80,49 @@ jobs:
           path: dist/game-box-windows-x64.zip
           if-no-files-found: error
 
-  # Publishes the exe as a pre-release. Pre-releases are skipped by
-  # `releases/latest`, which the launcher's updater reads, so builds never
-  # replace the version the updater offers. Runs for every branch.
+  # Publishes the build. On the default branch it becomes the Latest release,
+  # unless a newer build has already been published (runs are never cancelled,
+  # so an older one can finish last). Other branches get a pre-release, which
+  # `releases/latest` and therefore the updater skip.
   publish-build:
     name: Publish build release
     needs: [core, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.build-windows.outputs.version }}
+      ON_DEFAULT_BRANCH: ${{ github.ref_name == github.event.repository.default_branch }}
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: game-box-windows-x64
-      - uses: softprops/action-gh-release@v2
-        with:
-          tag_name: build-${{ github.run_number }}
-          target_commitish: ${{ github.sha }}
-          name: "Сборка #${{ github.run_number }} (${{ github.ref_name }})"
-          prerelease: true
-          generate_release_notes: true
-          files: game-box-windows-x64.zip
+      - name: Publish release
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          notes="Сборка #$GITHUB_RUN_NUMBER из ветки \`$GITHUB_REF_NAME\`, коммит $GITHUB_SHA."
+          if [ "$ON_DEFAULT_BRANCH" = true ]; then
+            title="Game Box $VERSION"
+            current=$(gh api "repos/$GH_REPO/releases/latest" -q .tag_name 2>/dev/null || true)
+            newest=$(printf '%s\n%s\n' "${current#v}" "$VERSION" | sort -V | tail -n 1)
+            if [ "$newest" = "$VERSION" ]; then
+              flags=(--latest)
+            else
+              echo "Latest is already $current, newer than $tag"
+              flags=(--latest=false)
+            fi
+          else
+            title="Game Box $VERSION ($GITHUB_REF_NAME)"
+            flags=(--prerelease --latest=false)
+          fi
+          if gh release view "$tag" > /dev/null 2>&1; then
+            # A re-run of the same workflow run: replace the package.
+            gh release upload "$tag" game-box-windows-x64.zip --clobber
+          else
+            gh release create "$tag" game-box-windows-x64.zip \
+              --target "$GITHUB_SHA" --title "$title" \
+              --notes "$notes" --generate-notes "${flags[@]}"
+          fi
