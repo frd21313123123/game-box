@@ -1,26 +1,50 @@
-//! «Монополия» — 2D board drawn with egui, ported from the user's
-//! TypeScript/React version (board layout, colours, rules and dialogs).
+//! «Монополия» — the board lies on a table in 3D and the camera looks down at
+//! it; the side panel and the dialogs are egui. Rules come from
+//! `monopoly-core`, a port of the user's TypeScript/React version.
 
+mod art;
 mod board;
+mod geom;
+mod models;
 mod panels;
+mod scene;
 
 use std::collections::HashMap;
 
+use bevy::pbr::DirectionalLightShadowMap;
 use bevy::prelude::*;
-use bevy_egui::{EguiContexts, EguiPrimaryContextPass};
-use monopoly_core::{bot_action, GameState, LogKind, Phase, PlayerId, BOARD_SIZE};
+use bevy_egui::{egui, EguiContexts, EguiPrimaryContextPass};
+use monopoly_core::{bot_action, Deck, GameState, LogKind, Phase, PlayerId, BOARD_SIZE};
 
 use crate::net::{SeatKind, Session};
 use crate::sfx::Sfx;
 use crate::steam::SteamApi;
-use crate::AppState;
+use crate::{AppState, MainCamera};
 
 pub struct MonopolyPlugin;
 
 impl Plugin for MonopolyPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(AppState::Monopoly), reset)
-            .add_systems(Update, (drive_bots, animate).chain().run_if(in_state(AppState::Monopoly)))
+        app.insert_resource(DirectionalLightShadowMap { size: 4096 })
+            .add_systems(Startup, scene::setup_assets)
+            .add_systems(OnEnter(AppState::Monopoly), (reset, scene::spawn_scene))
+            .add_systems(OnExit(AppState::Monopoly), scene::despawn_scene)
+            .add_systems(
+                Update,
+                (
+                    drive_bots,
+                    animate,
+                    scene::fit_camera,
+                    scene::sync_pawns,
+                    scene::sync_property,
+                    scene::animate_pieces,
+                    scene::animate_dice,
+                    scene::animate_card,
+                    scene::highlight_tile,
+                )
+                    .chain()
+                    .run_if(in_state(AppState::Monopoly)),
+            )
             .add_systems(
                 EguiPrimaryContextPass,
                 draw.run_if(in_state(AppState::Monopoly)).run_if(resource_exists::<crate::ThemeReady>),
@@ -28,8 +52,24 @@ impl Plugin for MonopolyPlugin {
     }
 }
 
-pub const DICE_ROLL_SECS: f32 = 0.75;
-const STEP_SECS: f32 = 0.16;
+/// How long the dice tumble across the board.
+pub const DICE_ROLL_SECS: f32 = 1.1;
+const STEP_SECS: f32 = 0.2;
+/// How long a drawn card stays in front of the camera.
+const CARD_SECS: f32 = 5.0;
+/// Bots wait this long after a card is drawn, so it can be read.
+const CARD_READ_SECS: f32 = 2.5;
+
+/// A drawn «Шанс» or «Казна» card held up for everyone to read.
+#[derive(Clone)]
+pub struct CardPopup {
+    pub deck: Deck,
+    pub text: String,
+    pub who: String,
+    pub age: f32,
+    /// Tells cards apart when the same card is drawn twice in a row.
+    pub seq: u32,
+}
 
 /// Client-side animation and dialog state.
 #[derive(Resource, Default)]
@@ -44,10 +84,8 @@ pub struct MonoUi {
     pub roll_seq: u32,
     /// Time left on the dice animation.
     pub dice_anim: f32,
-    pub dice_faces: (u8, u8),
     pub log_seq: u32,
-    /// Card drawn (deck name, text, who) shown in the centre of the board.
-    pub card_popup: Option<(String, String, String, f32)>,
+    pub card_popup: Option<CardPopup>,
     pub hovered_tile: Option<usize>,
     pub trade: Option<panels::TradeDraft>,
     pub offer: Option<panels::OfferDraft>,
@@ -64,12 +102,20 @@ impl MonoUi {
     }
 }
 
+/// The part of the window not covered by the side panel (logical pixels):
+/// the camera frames the board inside it.
+#[derive(Resource, Default)]
+pub struct BoardView {
+    pub free: Option<Rect>,
+}
+
 #[derive(Resource, Default)]
 struct BotTimer(f32);
 
 fn reset(mut commands: Commands) {
     commands.insert_resource(MonoUi::default());
     commands.insert_resource(BotTimer::default());
+    commands.insert_resource(BoardView::default());
 }
 
 fn drive_bots(
@@ -85,8 +131,9 @@ fn drive_bots(
     if state.phase != Phase::Playing {
         return;
     }
-    // Let the dice and pawns finish before the next bot move.
-    if ui.busy() || ui.card_popup.as_ref().is_some_and(|c| c.3 > 2.0) {
+    // Let the dice and pawns finish, and a drawn card be read, before the
+    // next bot move.
+    if ui.busy() || ui.card_popup.as_ref().is_some_and(|c| c.age < CARD_READ_SECS) {
         timer.0 = 0.0;
         return;
     }
@@ -141,8 +188,6 @@ fn animate(time: Res<Time>, session: Res<Session>, mut ui: ResMut<MonoUi>, mut s
     }
     if ui.dice_anim > 0.0 {
         ui.dice_anim -= dt;
-        let k = (time.elapsed_secs() * 14.0) as u32;
-        ui.dice_faces = ((k * 7 % 6 + 1) as u8, (k * 13 % 6 + 1) as u8);
     }
 
     // A new move: queue every tile the pawn walks through.
@@ -172,7 +217,12 @@ fn animate(time: Res<Time>, session: Res<Session>, mut ui: ResMut<MonoUi>, mut s
     }
     if let Some(id) = ui.moving {
         if ui.dice_anim <= 0.0 {
-            ui.hop += dt / STEP_SECS;
+            // A long jump (to jail) takes a little longer than a step.
+            let long = ui.path.first().is_some_and(|&next| {
+                let from = ui.pawn_pos.get(&id).copied().unwrap_or(0.0).round() as usize;
+                (next + BOARD_SIZE - from) % BOARD_SIZE != 1
+            });
+            ui.hop += dt / if long { STEP_SECS * 3.0 } else { STEP_SECS };
             if ui.hop >= 1.0 {
                 ui.hop = 0.0;
                 if !ui.path.is_empty() {
@@ -195,15 +245,21 @@ fn animate(time: Res<Time>, session: Res<Session>, mut ui: ResMut<MonoUi>, mut s
 
     // Card popups and sounds from new log entries.
     if state.log_seq != ui.log_seq {
-        let new = (state.log_seq - ui.log_seq) as usize;
+        let new = (state.log_seq.saturating_sub(ui.log_seq)) as usize;
         ui.log_seq = state.log_seq;
         let start = state.log.len().saturating_sub(new);
-        for e in &state.log[start..] {
+        for (k, e) in state.log[start..].iter().enumerate() {
             match e.kind {
                 LogKind::DrewCard => {
                     if let Some((deck, text)) = &e.card {
                         let who = e.player.and_then(|id| state.player(id)).map(|p| p.name.clone()).unwrap_or_default();
-                        ui.card_popup = Some((deck.name().to_string(), text.clone(), who, 0.0));
+                        ui.card_popup = Some(CardPopup {
+                            deck: *deck,
+                            text: text.clone(),
+                            who,
+                            age: 0.0,
+                            seq: state.log_seq - (new - k) as u32,
+                        });
                     }
                 }
                 LogKind::Bought | LogKind::AuctionWon | LogKind::OfferAccepted => {
@@ -220,8 +276,8 @@ fn animate(time: Res<Time>, session: Res<Session>, mut ui: ResMut<MonoUi>, mut s
         }
     }
     if let Some(c) = &mut ui.card_popup {
-        c.3 += dt;
-        if c.3 > 6.0 {
+        c.age += dt;
+        if c.age > CARD_SECS {
             ui.card_popup = None;
         }
     }
@@ -255,19 +311,43 @@ fn draw(
     mut contexts: EguiContexts,
     mut session: ResMut<Session>,
     mut ui: ResMut<MonoUi>,
+    mut view: ResMut<BoardView>,
+    camera: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     steam: Res<SteamApi>,
     mut next: ResMut<NextState<AppState>>,
-    time: Res<Time>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?.clone();
     let Some(state) = session.monopoly.clone() else {
-        bevy_egui::egui::CentralPanel::default().show(&ctx, |ui| {
+        egui::CentralPanel::default().show(&ctx, |ui| {
             ui.centered_and_justified(|ui| ui.label("Ожидаем данные от хоста…"));
         });
         return Ok(());
     };
     let leave = panels::sidebar(&ctx, &state, &mut session, &mut ui);
-    board::central(&ctx, &state, &session, &mut ui, time.elapsed_secs());
+    // Everything left of the side panel shows the board.
+    let free = ctx.available_rect();
+    view.free = Some(Rect::new(free.min.x, free.min.y, free.max.x, free.max.y));
+
+    // The tile under the mouse (unless the mouse is over the panel or a dialog).
+    let pointer = ctx.pointer_hover_pos().filter(|_| !ctx.is_pointer_over_area());
+    ui.hovered_tile = match (pointer, camera.single()) {
+        (Some(p), Ok((cam, gt))) => scene::pick_tile(cam, gt, Vec2::new(p.x, p.y)),
+        _ => None,
+    };
+    match &ui.card_popup {
+        Some(card) => {
+            // A click anywhere on the board puts the card back.
+            if card.age > 0.4 && pointer.is_some() && ctx.input(|i| i.pointer.any_click()) {
+                ui.card_popup = None;
+            }
+        }
+        None => {
+            if let Some(i) = ui.hovered_tile {
+                board::tile_tooltip(&ctx, &state, i);
+            }
+        }
+    }
+
     panels::dialogs(&ctx, &state, &mut session, &mut ui);
     if leave || ui.confirm_leave {
         ui.confirm_leave = true;
