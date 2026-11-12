@@ -362,12 +362,16 @@ pub fn draw_hud(
         Phase::PlayerTurn { seat, hand } => Some((seat, hand)),
         _ => None,
     };
+    // Pills placed so far (centre x, bottom y, width): the boxes come close
+    // together towards the dealer, and two long totals («Блэкджек»,
+    // «Перебор 24») of neighbouring hands used to overlap.
+    let mut placed: Vec<(f32, f32, f32)> = Vec::new();
     for (seat, p) in view.players.iter().enumerate() {
         for (h, hand) in p.hands.iter().enumerate() {
             if hand.cards.is_empty() {
                 continue;
             }
-            let Some(pos) = project(hand_label_pos(seat, n, h, p.hands.len(), hand.cards.len())) else { continue };
+            let Some(mut pos) = project(hand_label_pos(seat, n, h, p.hands.len(), hand.cards.len())) else { continue };
             let mut text = hand_text(hand);
             if hand.doubled {
                 text.push_str(" · ×2");
@@ -378,6 +382,15 @@ pub fn draw_hud(
                 None => theme::TEXT,
             };
             let is_active = active == Some((seat, h));
+            let width = ctx.fonts(|f| f.layout_no_wrap(text.clone(), semibold(14.0), color).size().x) + 22.0;
+            // Lift the pill above any it would cover.
+            while let Some(&(_, y, _)) = placed
+                .iter()
+                .find(|(x, y, w)| (pos.x - x).abs() < (width + w) / 2.0 + 4.0 && (pos.y - y).abs() < 26.0)
+            {
+                pos.y = y - 28.0;
+            }
+            placed.push((pos.x, pos.y, width));
             pill(&ctx, ("bj-hand", seat * 8 + h), pos, &text, color, is_active);
         }
     }

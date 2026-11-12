@@ -33,6 +33,31 @@ fn player_chip(ui: &mut egui::Ui, p: &Player, size: f32) {
     ui.painter().text(rect.center(), Align2::CENTER_CENTER, p.symbol(), egui::FontId::proportional(size * 0.55), Color32::WHITE);
 }
 
+/// Little green houses, or a red hotel, as on the board.
+fn building_icons(ui: &mut egui::Ui, level: u8) {
+    if level == 0 {
+        return;
+    }
+    let hotel = level >= 5;
+    let count = if hotel { 1 } else { level as usize };
+    let (w, h) = if hotel { (22.0, 13.0) } else { (10.0, 12.0) };
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(count as f32 * (w + 3.0), 16.0), egui::Sense::hover());
+    let color = if hotel { Color32::from_rgb(0xd8, 0x22, 0x22) } else { Color32::from_rgb(0x2f, 0xb8, 0x5a) };
+    for k in 0..count {
+        let x = rect.left() + k as f32 * (w + 3.0);
+        let base = rect.center().y + h / 2.0;
+        let roof = h * 0.42;
+        let points = vec![
+            egui::pos2(x, base),
+            egui::pos2(x + w, base),
+            egui::pos2(x + w, base - h + roof),
+            egui::pos2(x + w / 2.0, base - h),
+            egui::pos2(x, base - h + roof),
+        ];
+        ui.painter().add(egui::Shape::convex_polygon(points, color, stroke(1.0, theme::darken(color, 0.6))));
+    }
+}
+
 fn group_swatch(ui: &mut egui::Ui, t: TileIndex) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(10.0, 18.0), egui::Sense::hover());
     let color = tile(t).group().map(|g| rgb(g.rgb())).unwrap_or(Color32::from_rgb(140, 140, 150));
@@ -67,6 +92,7 @@ pub fn sidebar(ctx: &egui::Context, state: &GameState, session: &mut Session, ui
             if state.phase == Phase::Finished {
                 if let Some(w) = state.winner() {
                     egui::Frame::new().fill(theme::with_alpha(theme::GOLD, 40)).corner_radius(12).inner_margin(egui::Margin::same(12)).show(side, |ui_| {
+                        ui_.set_width(ui_.available_width());
                         ui_.label(RichText::new("Игра окончена").font(bold(20.0)));
                         ui_.label(RichText::new(format!("🏆 Победил {} {}", w.symbol(), w.name)).font(semibold(17.0)).color(theme::GOLD));
                     });
@@ -74,6 +100,9 @@ pub fn sidebar(ctx: &egui::Context, state: &GameState, session: &mut Session, ui
             } else if let Some(cur) = &current {
                 // ---- turn header & main actions -----------------------------
                 egui::Frame::new().fill(theme::PANEL_HI).corner_radius(12).inner_margin(egui::Margin::same(12)).show(side, |ui_| {
+                    // Span the panel whatever the content (it used to shrink to
+                    // the text when there was no button to show).
+                    ui_.set_width(ui_.available_width());
                     ui_.horizontal(|ui_| {
                         player_chip(ui_, cur, 30.0);
                         ui_.vertical(|ui_| {
@@ -122,6 +151,7 @@ pub fn sidebar(ctx: &egui::Context, state: &GameState, session: &mut Session, ui
                     if locals.contains(&debt.debtor) {
                         let debtor = state.player(debt.debtor).cloned();
                         egui::Frame::new().fill(theme::with_alpha(theme::BAD, 40)).stroke(stroke(1.0, theme::BAD)).corner_radius(12).inner_margin(egui::Margin::same(12)).show(side, |ui_| {
+                            ui_.set_width(ui_.available_width());
                             ui_.label(RichText::new("Не хватает денег!").font(bold(18.0)).color(theme::BAD));
                             let to = debt.creditor.and_then(|c| state.player(c)).map(|p| p.name.clone()).unwrap_or_else(|| "банку".into());
                             ui_.label(format!("Вы должны ₽{} ({to}).", debt.amount));
@@ -218,7 +248,7 @@ pub fn sidebar(ctx: &egui::Context, state: &GameState, session: &mut Session, ui
             // ---- log ---------------------------------------------------------------
             side.add_space(6.0);
             side.label(RichText::new("События").font(semibold(15.0)).color(theme::TEXT_DIM));
-            ScrollArea::vertical().stick_to_bottom(true).auto_shrink([false, false]).show(side, |ui_| {
+            let log = ScrollArea::vertical().stick_to_bottom(true).auto_shrink([false, false]).show(side, |ui_| {
                 for e in &state.log {
                     let color = match e.kind {
                         LogKind::Rent | LogKind::Tax | LogKind::Bankrupt | LogKind::GoToJail | LogKind::ThirdDoubleJail => theme::WARN,
@@ -230,6 +260,24 @@ pub fn sidebar(ctx: &egui::Context, state: &GameState, session: &mut Session, ui
                     ui_.label(RichText::new(&e.text).font(theme::regular(13.0)).color(color));
                 }
             });
+            // Older entries fade out under the heading instead of being cut
+            // in half at the top edge of the list.
+            let top = log.inner_rect;
+            side.painter().rect_filled(
+                // egui lets a scroll area paint a few pixels past its top edge.
+                egui::Rect::from_min_size(egui::pos2(top.left(), top.top() - 5.0), Vec2::new(top.width(), 12.0)),
+                0,
+                theme::PANEL,
+            );
+            let steps = 12;
+            for k in 0..steps {
+                let band = egui::Rect::from_min_size(
+                    egui::pos2(top.left(), top.top() + 7.0 + k as f32 * 2.0),
+                    Vec2::new(top.width(), 2.0),
+                );
+                let alpha = (255.0 * (1.0 - k as f32 / steps as f32)) as u8;
+                side.painter().rect_filled(band, 0, theme::with_alpha(theme::PANEL, alpha));
+            }
         });
     leave
 }
@@ -254,12 +302,7 @@ fn properties(ui: &mut egui::Ui, state: &GameState, session: &mut Session, me: &
                     name = name.color(theme::TEXT_DIM).italics();
                 }
                 ui.label(name);
-                let level = state.building_level(t);
-                if level == 5 {
-                    ui.label(RichText::new("отель").color(Color32::from_rgb(230, 80, 80)));
-                } else if level > 0 {
-                    ui.label(RichText::new("⌂".repeat(level as usize)).color(theme::GOOD));
-                }
+                building_icons(ui, state.building_level(t));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().button_padding = Vec2::new(6.0, 2.0);
                     if state.is_mortgaged(t) {
@@ -280,7 +323,7 @@ fn properties(ui: &mut egui::Ui, state: &GameState, session: &mut Session, me: &
                         }
                         if let Ok(c) = state.can_buy_house(me, t) {
                             let ok = my_turn && state.pending_debt.is_none();
-                            if ui.add_enabled(ok, egui::Button::new("+⌂")).on_hover_text(format!("Построить (₽{c})")).clicked() {
+                            if ui.add_enabled(ok, egui::Button::new("+ дом")).on_hover_text(format!("Построить (₽{c})")).clicked() {
                                 session.submit_monopoly(Action::BuyHouse(t));
                             }
                         }
@@ -292,10 +335,12 @@ fn properties(ui: &mut egui::Ui, state: &GameState, session: &mut Session, me: &
 }
 
 fn window(ctx: &egui::Context, title: &str, width: f32, add: impl FnOnce(&mut egui::Ui)) {
+    // Centred over the board, i.e. the part of the screen left of the panel.
+    let offset = ctx.available_rect().center() - ctx.screen_rect().center();
     egui::Window::new(title)
         .collapsible(false)
         .resizable(false)
-        .anchor(Align2::CENTER_CENTER, Vec2::new(-195.0, 0.0))
+        .anchor(Align2::CENTER_CENTER, offset)
         .frame(theme::card_frame().inner_margin(egui::Margin::same(18)))
         .title_bar(false)
         .show(ctx, |ui| {
@@ -612,11 +657,12 @@ fn bundle_editor(
 /// Returns true when the player confirmed leaving.
 pub fn confirm_leave(ctx: &egui::Context, session: &Session, ui: &mut MonoUi) -> bool {
     let mut confirmed = false;
+    let offset = ctx.available_rect().center() - ctx.screen_rect().center();
     egui::Window::new("leave")
         .title_bar(false)
         .resizable(false)
         .collapsible(false)
-        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+        .anchor(Align2::CENTER_CENTER, offset)
         .frame(theme::card_frame().inner_margin(egui::Margin::same(20)))
         .show(ctx, |w| {
             w.label(RichText::new("Выйти из игры?").font(bold(22.0)));

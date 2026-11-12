@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::board::TileIndex;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Deck {
     Chance,
     Chest,

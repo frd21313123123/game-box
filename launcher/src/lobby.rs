@@ -74,18 +74,22 @@ fn lobby_ui(
                 });
                 return;
             }
+            // Both cards reach the bottom of the window; the list of seats used
+            // to stop at a fixed height and cut the third seat in half while the
+            // space below stayed empty.
+            let card_h = (ui.available_height() - 40.0).max(560.0);
             ui.columns(2, |cols| {
                 // ---- seats ----------------------------------------------------
                 let left = &mut cols[0];
                 theme::card_frame().show(left, |ui| {
-                    ui.set_min_height(560.0);
+                    ui.set_min_height(card_h);
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(format!("Игроки ({}/{})", session.lobby.seats.len(), game.max_players())).font(bold(20.0)));
                     });
                     ui.add_space(6.0);
                     let seats = session.lobby.seats.clone();
                     let my = session.my_seat;
-                    egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
+                    egui::ScrollArea::vertical().max_height(card_h - 140.0).show(ui, |ui| {
                         for (i, seat) in seats.iter().enumerate() {
                             let me = seat.id == my;
                             egui::Frame::new()
@@ -170,7 +174,10 @@ fn lobby_ui(
                 // ---- settings & network ------------------------------------------
                 let right = &mut cols[1];
                 theme::card_frame().show(right, |ui| {
-                    ui.set_min_height(560.0);
+                    ui.set_min_height(card_h);
+                    // Not justified: wrapped rules used to be stretched to the
+                    // full width with wide gaps between the words.
+                    ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
                     ui.label(RichText::new("Настройки").font(bold(20.0)));
                     ui.add_space(6.0);
                     match game {
@@ -299,6 +306,7 @@ fn lobby_ui(
                             ui.label(RichText::new("Ждём, пока хост начнёт игру…").font(semibold(16.0)));
                         });
                     }
+                    });
                 });
             });
         });

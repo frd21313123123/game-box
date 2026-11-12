@@ -39,6 +39,10 @@ pub enum AppState {
 #[derive(Component)]
 pub struct MainCamera;
 
+/// Vertical field of view of the main camera (Monopoly narrows it while its
+/// board is shown).
+pub const CAMERA_FOV: f32 = 42.0 * std::f32::consts::PI / 180.0;
+
 fn main() {
     App::new()
         .add_plugins(
@@ -88,7 +92,7 @@ fn spawn_camera(mut commands: Commands) {
         MainCamera,
         Camera3d::default(),
         Projection::Perspective(PerspectiveProjection {
-            fov: 42f32.to_radians(),
+            fov: CAMERA_FOV,
             ..default()
         }),
         Transform::from_xyz(0.0, 6.0, 8.0).looking_at(Vec3::ZERO, Vec3::Y),
