@@ -1,6 +1,6 @@
 # Collects the Windows package into dist/game-box and zips it as
-# dist/game-box-windows-x64.zip. Used by both CI (build releases) and the
-# Release workflow (version tags).
+# dist/game-box-windows-x64.zip. Used by CI, which publishes it on the
+# Releases page.
 #
 # The zip layout matters: the in-app updater (launcher/src/update.rs) expects
 # a `game-box\` folder at the top level of the archive.
